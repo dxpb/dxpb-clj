@@ -58,14 +58,19 @@
         )))
 
 (defn parse-pkg-info [info]
-  {:pkgname (:pkgname info)
-   :info
-   (apply merge (for [arch-info (-> info :raw-info)]
-                  {(:arch-set arch-info)
-                   {:straight (parse-show-pkg-info (:straight arch-info))
-                    :cross (parse-show-pkg-info (:cross arch-info))
-                    } }))
-   })
+  (let [new-info (apply merge (for [arch-info (-> info :raw-info)]
+                                {(:arch-set arch-info)
+                                 {:straight (parse-show-pkg-info (:straight arch-info))
+                                  :cross (parse-show-pkg-info (:cross arch-info))
+                                  } }))
+        version (let [versions (set (apply concat (for [[_ info] new-info] (for [[_ info] info] (:version info)))))]
+                  (if (= 1 (count versions))
+                    (first versions)))
+        ]
+    {:pkgname (:pkgname info)
+     :version version
+     :info new-info
+     }))
 
 (defn xbps-src-read [path archs]
   (fn [pkgname result]
@@ -75,10 +80,10 @@
                       :raw-info (for [arch archs]
                                   (let [tgt-arch (:XBPS_TARGET_ARCH arch)]
                                     {:arch-set arch
-                                     :straight {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-q" "-i" "show-pkg-var" pkgname])
+                                     :straight {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-q" "-i" "show-pkg-var-dump" pkgname])
                                                 :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "show-avail" pkgname])
                                                 }
-                                     :cross {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "-q" "-i" "show-pkg-var" pkgname])
+                                     :cross {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "-q" "-i" "show-pkg-var-dump" pkgname])
                                              :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "show-avail" pkgname])
                                              }
                                      }))})]
@@ -89,7 +94,8 @@
 
 (defn augment-all-pkgs [with-this]
   (let [pkgname (:pkgname with-this)]
-    (swap! ALL_PKGS assoc (keyword pkgname) (:info with-this))))
+    (swap! ALL_PKGS assoc (keyword pkgname) {:info (:info with-this)
+                                             :version (:version with-this)})))
 
 (defn chan-write-all [c in]
   (if in
@@ -102,7 +108,7 @@
         pkgnames (chan 1000)
         pkginfo (chan 1000)
         ]
-    (pipeline-async 5 pkginfo (xbps-src-read path ARCH_PAIRS) pkgnames)
+    (pipeline-async 15 pkginfo (xbps-src-read path ARCH_PAIRS) pkgnames)
     (chan-write-all pkgnames file-list)
     (loop [done 0]
       (println done "/" total-num-files)
@@ -148,7 +154,7 @@
 (defn pkgname-to-needs [& {:keys [pkgname all-pkgs build-env cross-build]}]
   (if-let [pkgname (pkgname-to-key pkgname)]
     (let [which-way (if cross-build :cross :straight)
-          pkg (get-in all-pkgs [pkgname build-env which-way])
+          pkg (get-in all-pkgs [pkgname :info build-env which-way])
           {:keys [found unfindable]} (obtain-pkgnames (:hostmakedepends pkg))
           found-hostneeds found ;; nil is ironed out by obtain-pkgnames
           unfound-deps unfindable
