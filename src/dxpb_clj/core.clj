@@ -124,17 +124,17 @@
 (defn pkgname-to-key [pkgname]
   (let [take1 (keyword pkgname)]
     (if (>= (.indexOf (keys @ALL_PKGS) take1) 0)
-      take1
+      {:as-key take1 :version-specified false :spec pkgname}
       (if (or (>= (.indexOf pkgname ">") 0)
               (>= (.indexOf pkgname "<") 0)
               (>= (.indexOf pkgname "=") 0)
               )
         (let [{:keys [out exit]} (sh "xbps-uhelper" "getpkgdepname" pkgname)]
           (if (= 0 exit)
-            (keyword (trim out))))
+            {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))
         (let [{:keys [out exit]} (sh "xbps-uhelper" "getpkgname" pkgname)]
           (if (= 0 exit)
-            (keyword (trim out))))
+            {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))
         ))))
 
 ;; XXX: write spec: in must be list of strings or nil
@@ -144,22 +144,37 @@
          found []
          unfindable []]
     (if pkgnames
-      (if-let [name (pkgname-to-key (first pkgnames))]
-        (recur (next pkgnames) (conj found {name (first pkgnames)}) unfindable)
+      (if-let [{:keys [as-key version-specified spec]} (pkgname-to-key (first pkgnames))]
+        (recur (next pkgnames) (conj found {as-key {:spec spec :version-checked (not version-specified)}}) unfindable)
         (recur (next pkgnames) found (conj unfindable (first pkgnames)))
         )
       {:found found
        :unfindable unfindable})))
 
+(defn merge-obtained-pkgnames [a b]
+  (cond
+    (= (:spec a) (:spec b)) a ;; doesn't matter, a == b basically
+    (:version-checked a) b
+    (:version-checked b) a ;; by being here, a's version was not checked
+    ;; by being down here, neither version was checked and specs not=
+    (and (coll? (:spec a)) (coll? (:spec b))) {:spec (concat (:spec a) (:spec b)) :version-checked false}
+    ;; but they are not both sequences... is either a sequence?
+    (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-checked false}
+    ;; exactly 1 is a sequence
+    (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-checked false}
+    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-checked false}
+    ))
+
 (defn pkgname-to-needs [& {:keys [pkgname all-pkgs build-env cross-build]}]
-  (if-let [pkgname (pkgname-to-key pkgname)]
-    (let [which-way (if cross-build :cross :straight)
+  (if-let [pkgname-as-specified (pkgname-to-key pkgname)]
+    (let [pkgname (:as-key pkgname-as-specified)
+          which-way (if cross-build :cross :straight)
           pkg (get-in all-pkgs [pkgname :info build-env which-way])
           {:keys [found unfindable]} (obtain-pkgnames (:hostmakedepends pkg))
-          found-hostneeds found ;; nil is ironed out by obtain-pkgnames
+          found-hostneeds (apply merge-with merge-obtained-pkgnames found) ;; found ;; nil is ironed out by obtain-pkgnames
           unfound-deps unfindable
           {:keys [found unfindable]} (obtain-pkgnames (concat (:makedepends pkg) (:depends pkg)))
-          found-targetneeds found
+          found-targetneeds (apply merge-with merge-obtained-pkgnames found) ;;found
           unfound-deps (concat unfindable unfound-deps)]
       {:host-requirements found-hostneeds
        :target-requirements found-targetneeds
