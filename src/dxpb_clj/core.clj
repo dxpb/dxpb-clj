@@ -15,21 +15,21 @@
 
 (def XBPS_SRC_WORKERS (atom 0))
 
-(def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "i686"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64-musl"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"}
+(def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"         :cross false}
+                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"    :cross false}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "i686"           :cross false}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l"         :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l-musl"    :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l"         :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l-musl"    :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64"        :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64-musl"   :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc"            :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc-musl"       :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64"          :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64-musl"     :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"        :cross true}
+               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
                  ])
 
 (defn graph-is-read []
@@ -41,7 +41,7 @@
       dir
       (apply sh cmd))))
 
-(defn parse-show-pkg-info [{:keys [show-pkg-info show-avail] :as full-info}]
+(defn parse-show-pkg-info [{:keys [show-pkg-info show-avail]}]
   (let [new-info (merge {::err (not= 0 (:exit show-pkg-info))
                          ::can-be-built (= 0 (:exit show-avail))}
                         (apply merge
@@ -60,9 +60,7 @@
 (defn parse-pkg-info [info]
   (let [new-info (apply merge (for [arch-info (-> info :raw-info)]
                                 {(:arch-set arch-info)
-                                 {:straight (parse-show-pkg-info (:straight arch-info))
-                                  :cross (parse-show-pkg-info (:cross arch-info))
-                                  } }))
+                                 (parse-show-pkg-info arch-info)}))
         version (let [versions (set (apply concat (for [[_ info] new-info] (for [[_ info] info] (:version info)))))]
                   (if (= 1 (count versions))
                     (first versions)))
@@ -78,15 +76,18 @@
       (let [output (parse-pkg-info
                      {:pkgname pkgname
                       :raw-info (for [arch archs]
-                                  (let [tgt-arch (:XBPS_TARGET_ARCH arch)]
-                                    {:arch-set arch
-                                     :straight {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-q" "-i" "show-pkg-var-dump" pkgname])
-                                                :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "show-avail" pkgname])
-                                                }
-                                     :cross {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "-q" "-i" "show-pkg-var-dump" pkgname])
-                                             :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "show-avail" pkgname])
-                                             }
-                                     }))})]
+                                  (let [tgt-arch (:XBPS_TARGET_ARCH arch)
+                                        straight-build (not (:cross arch))]
+                                    (merge
+                                      {:arch-set arch}
+                                      (if straight-build
+                                        {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-q" "-i" "show-pkg-var-dump" pkgname])
+                                         :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "show-avail" pkgname])
+                                         }
+                                        {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "-q" "-i" "show-pkg-var-dump" pkgname])
+                                         :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "show-avail" pkgname])
+                                         }))
+                                     ))})]
         (>!! result output))
       (close! result)
       )
@@ -169,7 +170,7 @@
   (if-let [pkgname-as-specified (pkgname-to-key pkgname)]
     (let [pkgname (:as-key pkgname-as-specified)
           which-way (if cross-build :cross :straight)
-          pkg (get-in all-pkgs [pkgname :info build-env which-way])
+          pkg (get-in all-pkgs [pkgname :info build-env])
           {:keys [found unfindable]} (obtain-pkgnames (:hostmakedepends pkg))
           found-hostneeds (apply merge-with merge-obtained-pkgnames found) ;; found ;; nil is ironed out by obtain-pkgnames
           unfound-deps unfindable
