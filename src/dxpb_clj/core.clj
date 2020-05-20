@@ -4,14 +4,9 @@
   (:require [clojure.core.async :as async :refer [>!! <!! >! <! go chan thread pipeline-async close!]]
             [clojure.java.shell :as shell :refer [sh]]
             [clojure.string :refer [split trim]]
-            [duratom.core :refer [duratom]]
             [clojure.java.io :refer [writer]]
-            [clojure.pprint :refer [pprint]]))
-
-;;(def ALL_PKGS (duratom :local-file
-;;                       :file-path "./pkgs.edn"
-;;                       :init {}))
-(def ALL_PKGS (atom {}))
+            [clojure.pprint :refer [pprint]]
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -54,7 +49,6 @@
     (-> new-info
         (assoc :version version-str)
         (dissoc :revision)
-        (dissoc :pkgname)
         )))
 
 (defn parse-pkg-info [info]
@@ -67,7 +61,8 @@
         ]
     {:pkgname (:pkgname info)
      :version version
-     :info new-info
+     :info (assoc new-info ;; this is wrong for our uses for subpkgs
+                  :pkgname (:pkgname info))
      }))
 
 (defn xbps-src-read [path archs]
@@ -93,11 +88,6 @@
       )
     ))
 
-(defn augment-all-pkgs [with-this]
-  (let [pkgname (:pkgname with-this)]
-    (swap! ALL_PKGS assoc (keyword pkgname) {:info (:info with-this)
-                                             :version (:version with-this)})))
-
 (defn chan-write-all [c in]
   (if in
     (do
@@ -114,17 +104,17 @@
     (loop [done 0]
       (println done "/" total-num-files)
       (let [new-info (<!! pkginfo)]
-        (augment-all-pkgs new-info))
+        (add-pkg (:pkgname new-info) (:info new-info)))
       (if (not= (inc done) total-num-files)
         (recur (inc done)))
       )))
 
 ;; XXX: Write tests, testing pkgnames found in templates as written
 ;; Valid ones get a pkgname out. Invalid ones get a nil.
-;; I don't like how this references @ALL_PKGS
 (defn pkgname-to-key [pkgname]
+  (assert pkgname)
   (let [take1 (keyword pkgname)]
-    (if (>= (.indexOf (keys @ALL_PKGS) take1) 0)
+    (if (does-pkgname-exist pkgname)
       {:as-key take1 :version-specified false :spec pkgname}
       (if (or (>= (.indexOf pkgname ">") 0)
               (>= (.indexOf pkgname "<") 0)
@@ -166,11 +156,10 @@
     (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-checked false}
     ))
 
-(defn pkgname-to-needs [& {:keys [pkgname all-pkgs build-env cross-build]}]
+(defn pkgname-to-needs [& {:keys [pkgname build-env]}]
   (if-let [pkgname-as-specified (pkgname-to-key pkgname)]
     (let [pkgname (:as-key pkgname-as-specified)
-          which-way (if cross-build :cross :straight)
-          pkg (get-in all-pkgs [pkgname :info build-env])
+          pkg (get-pkg-data (name pkgname) build-env)
           {:keys [found unfindable]} (obtain-pkgnames (:hostmakedepends pkg))
           found-hostneeds (apply merge-with merge-obtained-pkgnames found) ;; found ;; nil is ironed out by obtain-pkgnames
           unfound-deps unfindable
@@ -183,9 +172,6 @@
        }
       ))
   )
-
-(defn write-all-pkgs-to-file [filename]
-  (pprint @ALL_PKGS (writer filename)))
 
 (defn -main
   "I don't do a whole lot ... yet."

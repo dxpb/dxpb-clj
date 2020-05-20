@@ -5,7 +5,9 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [org.clojure/core.async "1.1.587"]
-                 [duratom "0.5.2"]]
+                 [juxt/crux-core "20.05-1.8.3-alpha"]
+                 [juxt/crux-rocksdb "20.05-1.8.3-alpha"]
+                 [yogthos/config "1.1.7"]]
   :main ^:skip-aot dxpb-clj.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})
