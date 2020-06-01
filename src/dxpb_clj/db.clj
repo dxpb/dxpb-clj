@@ -9,10 +9,11 @@
 (defn start-standalone-node ^crux.api.ICruxAPI [storage-dir]
   (crux/start-node {:crux.node/topology '[crux.standalone/topology
                                           crux.kv.rocksdb/kv-store]
-                    :crux.kv/db-dir (str io/file storage-dir "rocksdb")}))
+                    :crux.kv/db-dir (str (io/file storage-dir "rocksdb"))}))
 
 (defn get-storage-dir! []
-  (:DXPB_SERVER_DIR env))
+  (or (:DXPB_SERVER_DIR env)
+      "./datadir"))
 
 (defn db-guard []
   (if (nil? @node)
