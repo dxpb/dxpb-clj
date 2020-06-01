@@ -55,12 +55,12 @@
                   :where '[[?e :pkgname ?name]
                            [?e :dxpb/hostarch ?hostarch]
                            [?e :dxpb/targetarch ?targetarch]
-                           ; [?e :dxpb/crossbuild ?cross]
+                           [?e :dxpb/crossbuild ?cross]
                            ]
                   :args [{'?name pkgname
                           '?hostarch XBPS_ARCH
                           '?targetarch XBPS_TARGET_ARCH
-                          ; '?cross cross
+                          '?cross cross
                           }]})
     )
 
