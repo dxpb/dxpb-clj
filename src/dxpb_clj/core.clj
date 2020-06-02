@@ -6,7 +6,8 @@
             [clojure.string :refer [split trim]]
             [clojure.java.io :refer [writer]]
             [clojure.pprint :refer [pprint]]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key]]))
+            [clojure.set :as set]
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -128,19 +129,22 @@
             {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))
         ))))
 
-;; XXX: write spec: in must be list of strings or nil
+;; XXX: write spec: in must be seq of strings or nil
 ;; out must be {:found LIST :unfindable LIST}
 (defn obtain-pkgnames [list-in]
-  (loop [pkgnames list-in
-         found []
-         unfindable []]
-    (if pkgnames
-      (if-let [{:keys [as-key version-specified spec]} (pkgname-to-key (first pkgnames))]
-        (recur (next pkgnames) (conj found {as-key {:spec spec :version-not-specified (not version-specified)}}) unfindable)
-        (recur (next pkgnames) found (conj unfindable (first pkgnames)))
-        )
-      {:found found
-       :unfindable unfindable})))
+  (if (empty? list-in)
+    {:found []
+     :unfindable []}
+    (loop [pkgnames (list* list-in)
+           found []
+           unfindable []]
+      (if pkgnames
+        (if-let [{:keys [as-key version-specified spec]} (pkgname-to-key (first pkgnames))]
+          (recur (next pkgnames) (conj found {as-key {:spec spec :version-not-specified (not version-specified)}}) unfindable)
+          (recur (next pkgnames) found (conj unfindable (first pkgnames)))
+          )
+        {:found found
+         :unfindable unfindable}))))
 
 (defn merge-obtained-pkgnames [a b]
   (cond
@@ -156,14 +160,23 @@
     (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false}
     ))
 
+(defn obtain-all-deps-of-pkgs-for-arch [& {:keys [pkgnames arch] :as what}]
+  (loop [next-specs (set pkgnames)
+         seen-specs #{}]
+    (if (not (empty? next-specs))
+      (let [unseen-specs (set/difference next-specs seen-specs)]
+        (recur (get-all-needs-for-arch :pkgnames unseen-specs :arch arch) (set/union unseen-specs seen-specs)))
+      (obtain-pkgnames seen-specs))
+    ))
+
 (defn pkgname-to-needs [& {:keys [pkgname build-env]}]
   (if-let [pkgname-as-specified (pkgname-to-key pkgname)]
     (let [pkgname (:as-key pkgname-as-specified)
           pkg (get-pkg-data (name pkgname) build-env)
-          {:keys [found unfindable]} (obtain-pkgnames (:hostmakedepends pkg))
+          {:keys [found unfindable]} (obtain-all-deps-of-pkgs-for-arch :pkgnames (:hostmakedepends pkg) :arch (:XBPS_ARCH build-env))
           found-hostneeds (apply merge-with merge-obtained-pkgnames found) ;; found ;; nil is ironed out by obtain-pkgnames
           unfound-deps unfindable
-          {:keys [found unfindable]} (obtain-pkgnames (concat (:makedepends pkg) (:depends pkg)))
+          {:keys [found unfindable]} (obtain-all-deps-of-pkgs-for-arch :pkgnames (concat (:makedepends pkg) (:depends pkg)) :arch (:XBPS_TARGET_ARCH build-env))
           found-targetneeds (apply merge-with merge-obtained-pkgnames found) ;;found
           unfound-deps (concat unfindable unfound-deps)]
       {:host-requirements found-hostneeds
