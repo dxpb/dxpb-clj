@@ -6,6 +6,10 @@
 
 (def node (atom nil))
 
+(defn- only [in]
+  (if (= 1 (count in))
+    (first in)))
+
 (defn start-standalone-node ^crux.api.ICruxAPI [storage-dir]
   (crux/start-node {:crux.node/topology '[crux.standalone/topology
                                           crux.kv.rocksdb/kv-store]
@@ -70,6 +74,6 @@
    (crux/entity (crux/db @node) pkgkey))
   ([pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as build-profile}]
    (-> (get-pkg-key pkgname build-profile)
-       first
-       first
+       only
+       only
        get-pkg-data)))
