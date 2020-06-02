@@ -38,11 +38,11 @@
                                  {:dxpb/hostarch hostarch}
                                  {:dxpb/targetarch targetarch}
                                  {:dxpb/crossbuild is-cross}
-                                 )))]
-    (crux/submit-tx @node
-                       (map
-                         #(vector :crux.tx/put (make-map-data %))
-                         pkginfo))))
+                                 {:pkgname pkgname}
+                                 )))
+        to-submit (map #(vector :crux.tx/put (make-map-data %))
+                       pkginfo)]
+    (crux/submit-tx @node to-submit)))
 
 (defn does-pkgname-exist [pkgname]
   (db-guard)

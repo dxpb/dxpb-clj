@@ -54,16 +54,16 @@
 (defn parse-pkg-info [info]
   (let [new-info (apply merge (for [arch-info (-> info :raw-info)]
                                 {(:arch-set arch-info)
-                                 (parse-show-pkg-info arch-info)}))
+                                 (merge
+                                   (parse-show-pkg-info arch-info)
+                                   {:pkgname (:pkgname info)})})) ;; this is wrong for our uses for subpkgs, so we overwrite pkgname
         version (let [versions (set (apply concat (for [[_ info] new-info] (for [[_ info] info] (:version info)))))]
                   (if (= 1 (count versions))
                     (first versions)))
         ]
     {:pkgname (:pkgname info)
      :version version
-     :info (assoc new-info ;; this is wrong for our uses for subpkgs
-                  :pkgname (:pkgname info))
-     }))
+     :info new-info }))
 
 (defn xbps-src-read [path archs]
   (fn [pkgname result]
