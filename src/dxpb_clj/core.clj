@@ -136,7 +136,7 @@
          unfindable []]
     (if pkgnames
       (if-let [{:keys [as-key version-specified spec]} (pkgname-to-key (first pkgnames))]
-        (recur (next pkgnames) (conj found {as-key {:spec spec :version-checked (not version-specified)}}) unfindable)
+        (recur (next pkgnames) (conj found {as-key {:spec spec :version-not-specified (not version-specified)}}) unfindable)
         (recur (next pkgnames) found (conj unfindable (first pkgnames)))
         )
       {:found found
@@ -145,15 +145,15 @@
 (defn merge-obtained-pkgnames [a b]
   (cond
     (= (:spec a) (:spec b)) a ;; doesn't matter, a == b basically
-    (:version-checked a) b
-    (:version-checked b) a ;; by being here, a's version was not checked
+    (:version-not-specified a) b
+    (:version-not-specified b) a ;; by being here, a's version was not checked
     ;; by being down here, neither version was checked and specs not=
-    (and (coll? (:spec a)) (coll? (:spec b))) {:spec (concat (:spec a) (:spec b)) :version-checked false}
+    (and (coll? (:spec a)) (coll? (:spec b))) {:spec (concat (:spec a) (:spec b)) :version-not-specified false}
     ;; but they are not both sequences... is either a sequence?
-    (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-checked false}
+    (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-not-specified false}
     ;; exactly 1 is a sequence
-    (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-checked false}
-    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-checked false}
+    (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-not-specified false}
+    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false}
     ))
 
 (defn pkgname-to-needs [& {:keys [pkgname build-env]}]
