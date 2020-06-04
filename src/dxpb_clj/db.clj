@@ -98,3 +98,36 @@
                              :args all-pkg-query-args})]
 
     (apply union (map set [(-> depends vec flatten) (-> makedepends vec flatten)]))))
+
+(defn pkg-is-noarch [pkgname]
+  (db-guard)
+  (let [pkgname (if (keyword? pkgname) (name pkgname) pkgname)]
+    (-> (crux/q (crux/db @node)
+                {:find '[?archs]
+                 :where '[[?e :pkgname ?name]
+                          [?e :archs ?archs]
+                          ]
+                 :args [{'?name pkgname}]})
+        ;; We have a set of vectors of lists
+        only
+        ;; We have a vector of lists, each vector is from 1 pkg
+        only
+        ;; We have a list of archs. It's not noarch if there are multiple values
+        only
+        ;; We have a string or nil.
+        (= "noarch"))))
+
+(defn pkg-version [pkgname]
+  (db-guard)
+  (let [pkgname (if (keyword? pkgname) (name pkgname) pkgname)]
+    (-> (crux/q (crux/db @node)
+                {:find '[?version]
+                 :where '[[?e :pkgname ?name]
+                          [?e :version ?version]
+                          ]
+                 :args [{'?name pkgname}]})
+        ;; We have a set of vectors of strings. Better be the same across all pkgs!
+        only
+        ;; We have a vector of strings, each vector is from 1 pkg, hope they all match!
+        only
+        )))

@@ -7,7 +7,7 @@
             [clojure.java.io :refer [writer]]
             [clojure.pprint :refer [pprint]]
             [clojure.set :as set]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch]]))
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -131,7 +131,7 @@
 
 ;; XXX: write spec: in must be seq of strings or nil
 ;; out must be {:found LIST :unfindable LIST}
-(defn obtain-pkgnames [list-in]
+(defn obtain-pkgnames [list-in arch]
   (if (empty? list-in)
     {:found []
      :unfindable []}
@@ -140,24 +140,25 @@
            unfindable []]
       (if pkgnames
         (if-let [{:keys [as-key version-specified spec]} (pkgname-to-key (first pkgnames))]
-          (recur (next pkgnames) (conj found {as-key {:spec spec :version-not-specified (not version-specified)}}) unfindable)
+          (recur (next pkgnames) (conj found {as-key {:spec spec :version-not-specified (not version-specified) :arch (if (pkg-is-noarch as-key) "noarch" arch)}}) unfindable)
           (recur (next pkgnames) found (conj unfindable (first pkgnames)))
           )
         {:found found
          :unfindable unfindable}))))
 
+;; Takes in two maps, {:keys [spec version-not-specified arch]}, returns 1 map same pattern.
 (defn merge-obtained-pkgnames [a b]
   (cond
     (= (:spec a) (:spec b)) a ;; doesn't matter, a == b basically
     (:version-not-specified a) b
     (:version-not-specified b) a ;; by being here, a's version was not checked
-    ;; by being down here, neither version was checked and specs not=
-    (and (coll? (:spec a)) (coll? (:spec b))) {:spec (concat (:spec a) (:spec b)) :version-not-specified false}
+    ;; by being down here, neither version was checked and specs not=. This means any spec that becomes a coll is itself specifying a pkg version as well.
+    (and (coll? (:spec a)) (coll? (:spec b))) {:spec (concat (:spec a) (:spec b)) :version-not-specified false :arch (:arch a)}
     ;; but they are not both sequences... is either a sequence?
-    (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-not-specified false}
+    (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-not-specified false :arch (:arch a)}
     ;; exactly 1 is a sequence
-    (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-not-specified false}
-    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false}
+    (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-not-specified false :arch (:arch a)}
+    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false :arch (:arch a)}
     ))
 
 (defn obtain-all-deps-of-pkgs-for-arch [& {:keys [pkgnames arch] :as what}]
@@ -166,7 +167,7 @@
     (if (not (empty? next-specs))
       (let [unseen-specs (set/difference next-specs seen-specs)]
         (recur (get-all-needs-for-arch :pkgnames unseen-specs :arch arch) (set/union unseen-specs seen-specs)))
-      (obtain-pkgnames seen-specs))
+      (obtain-pkgnames seen-specs arch))
     ))
 
 (defn pkgname-to-needs [& {:keys [pkgname build-env]}]
@@ -185,6 +186,36 @@
        }
       ))
   )
+
+(defn verify-pkg-version-ok [& {:keys [pkgname version specs spec]}]
+  (if (nil? spec)
+    (if (coll? specs)
+      (empty? (filter false? (map #(verify-pkg-version-ok :pkgname pkgname :version version :spec %) specs)))
+      (verify-pkg-version-ok :pkgname pkgname :version version :spec specs)
+      )
+    (let [;; when running the below command, (= exit 1) is a match.
+          our-pkg-spec (str pkgname "-" version)
+          _ (prn our-pkg-spec)
+          _ (prn spec)
+          {:keys [exit]} (sh "xbps-uhelper" "pkgmatch" our-pkg-spec spec)
+          _ (prn exit)
+          ]
+      (= exit 1)
+      ))
+  )
+
+(defn need-to-filename [[pkgname-as-key need]]
+  (let [pkgname (name pkgname-as-key)
+        version (pkg-version pkgname)
+        arch (:arch need)
+        needs-verification (not (:version-not-specified need))
+        specs-ok (if needs-verification
+                   (verify-pkg-version-ok :pkgname pkgname
+                                          :version version
+                                          :specs (:spec need))
+                   true)
+        ]
+    {(str pkgname "-" version "." arch ".xbps") specs-ok}))
 
 (defn -main
   "I don't do a whole lot ... yet."
