@@ -187,6 +187,7 @@
       ))
   )
 
+;; Pure function. Can be memoized.
 (defn verify-pkg-version-ok [& {:keys [pkgname version specs spec]}]
   (if (nil? spec)
     (if (coll? specs)
@@ -195,10 +196,7 @@
       )
     (let [;; when running the below command, (= exit 1) is a match.
           our-pkg-spec (str pkgname "-" version)
-          _ (prn our-pkg-spec)
-          _ (prn spec)
           {:keys [exit]} (sh "xbps-uhelper" "pkgmatch" our-pkg-spec spec)
-          _ (prn exit)
           ]
       (= exit 1)
       ))
