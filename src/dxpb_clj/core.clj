@@ -217,6 +217,19 @@
         ]
     {(str pkgname "-" version "." arch ".xbps") specs-ok}))
 
+(defn pkg-requires-to-build [& {:keys [pkgname build-env] :as pkg-spec}]
+  (let [spec-not-parsable (fn [known-data] (not (true? (val known-data))))
+        {:keys [target-requirements host-requirements unfindable] :as needs} (pkgname-to-needs :pkgname pkgname :build-env build-env)
+        host-packages-needed (apply merge (map need-to-filename host-requirements))
+        target-packages-needed (apply merge (map need-to-filename target-requirements))
+        pkg-names-needed (concat (keys host-packages-needed) (keys target-packages-needed))
+        failure-reasons (concat (filter spec-not-parsable host-packages-needed) (filter spec-not-parsable target-packages-needed))
+        ]
+    {:files-needed pkg-names-needed
+     :unparsable-specs unfindable
+     :unavailable-packages failure-reasons}
+    ))
+
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
