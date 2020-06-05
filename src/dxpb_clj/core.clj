@@ -214,6 +214,8 @@
                                           :version version
                                           :specs (:spec need))
                    true)
+        specs-ok (if (true? specs-ok) specs-ok
+                   (:spec need))
         ]
     {(str pkgname "-" version "." arch ".xbps") specs-ok}))
 
