@@ -7,6 +7,15 @@
             [clojure.java.io :refer [writer]]
             [clojure.pprint :refer [pprint]]
             [clojure.set :as set]
+            [compojure.core :as comp]
+            [compojure.route :as comproute]
+            [ring.adapter.jetty :refer [run-jetty]]
+            [ring.middleware.defaults :as rd]
+            [ring.middleware.multipart-params :as mp]
+            [ring.util.response :as ring-response]
+            [hiccup.core :as hiccup]
+            [hiccup.page :as hiccup-page]
+            [clojure.java.io :as io]
             [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
@@ -230,7 +239,120 @@
      :unavailable-packages failure-reasons}
     ))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def BASE_URL (atom "/"))
+
+(defn strip-trailing-slash [thing]
+  (if (and (= \/ (last thing)) (> (count thing) 1))
+    (subs thing 0 (-> thing count dec))
+    thing))
+
+(defn url [& args]
+  (let [append (clojure.string/join (map #(if (keyword? %) (name %) %) args))]
+    (if (and (= \/ (first append)) (= \/ (last @BASE_URL)))
+      (str @BASE_URL (subs append 1))
+      (if (and (not= \/ (first append)) (not= \/ (last @BASE_URL)))
+        (str @BASE_URL "/" append)
+        (str @BASE_URL append)))))
+
+(defn wrap-page [resp & {:keys [title-annendum]}]
+  (->
+    (hiccup-page/html5 [:html (into [:head
+                                     [:title (str "DXPB"
+                                                  (if title-annendum (str " - " title-annendum)))]
+                                     [:meta {:name :viewport :content "width=device-width"}]
+                                     [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]])
+                        [:body
+                         [:div.main resp]]])
+    ring.util.response/response
+    (ring.util.response/content-type "text/html")))
+
+(defn main-interactive-page [req]
+  (wrap-page [:main {}
+              ]))
+
+(defn build-requirement-page [pkgname host-arch tgt-arch cross]
+  (fn [req]
+    (let [build-env {:XBPS_ARCH host-arch :XBPS_TARGET_ARCH tgt-arch :cross cross}
+          build-env (if (> (.indexOf ARCH_PAIRS build-env) -1) build-env nil)
+          version (pkg-version pkgname)
+          {:keys [files-needed unparsable-spec unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
+      (if (and version build-env)
+        (wrap-page
+          [:main {}
+           [:table {}
+            [:tr [:td {} "Package name"] [:td {} pkgname]]
+            [:tr [:td {} "Current Version"] [:td {} version]]
+            [:tr [:td {} "Host Arch"] [:td {} host-arch]]
+            [:tr [:td {} "Target Arch"] [:td {} tgt-arch]]
+            [:tr [:td {} "Cross-build"] [:td {} cross]]]
+           (if (not (empty? files-needed))
+             (into [:table {} [:thead [:th {} "File Required"]]]
+                   (for [package-file files-needed]
+                     [:tr {} [:td {} package-file]]))
+             [:p {} "No dependencies"])
+           (if (not (empty? unparsable-spec))
+             (into [:table {} [:thead [:th {} "DXPB Confused"]]]
+                   (for [package-file unparsable-spec]
+                     [:tr {} [:td {} package-file]]))
+             [:p {} "All dependencies could be found as packages"])
+           (if (not (empty? unavailable-packages))
+             (into [:table {} [:thead [:th {} "Unavailable Dependency"] [:th {} "Reason"]]]
+                   (for [[unavailable info] unavailable-packages]
+                     [:tr {} [:td {} unavailable] [:td {} (str info)]]))
+             [:p {} "Versions were sufficient for all dependencies"])
+           ]
+          :title-annendum (str pkgname " - needs"))
+        (assoc
+          (wrap-page
+            [:main {}
+             [:h3 "Package or build environment could not be found"]] :title-annendum "404")
+          :status 404)))
+    ))
+
+(comp/defroutes dxpb-routes
+  (comp/context (strip-trailing-slash @BASE_URL) []
+		(comp/GET "/" [] main-interactive-page)
+		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))
+                ))
+
+(defn ignore-trailing-slash
+  "Modifies the request uri before calling the handler.
+  Removes a single trailing slash from the end of the uri if present.
+  Useful for handling optional trailing slashes until Compojure's route matching syntax supports regex.
+  Adapted from http://stackoverflow.com/questions/8380468/compojure-regex-for-matching-a-trailing-slash"
+  [handler]
+  (fn [request]
+    (let [uri (:uri request)]
+      (handler (assoc request :uri (if (and (not (= "/" uri))
+                                            (.endsWith uri "/"))
+                                     (subs uri 0 (dec (count uri)))
+                                     uri))))))
+
+(defn resp-404 [req]
+  (assoc
+    (wrap-page [:main {} [:h3 "404 - route not found"]] :title-annendum "404")
+    :status 404))
+
+(defn wrap-default-404 [handler]
+  (fn [req]
+    (if-let [resp (handler req)]
+      resp
+      (resp-404 req))))
+
+(def rosie ; ring around a
+  (-> dxpb-routes
+      ignore-trailing-slash
+      wrap-default-404
+      (rd/wrap-defaults (-> rd/site-defaults (assoc :proxy true)))
+      ))
+
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
-  (println "Hello, World!"))
+  (let [port (Integer/valueOf (or (System/getenv "DXPB_PORT") "3001"))]
+    (println "Running server now on port " port)
+    (run-jetty rosie {:port port})))
