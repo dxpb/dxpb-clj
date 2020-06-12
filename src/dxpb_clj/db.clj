@@ -81,23 +81,25 @@
 
 (defn get-all-needs-for-arch [& {:keys [pkgnames arch]}]
   (db-guard)
-  (let [all-pkg-query-args (vec (map #(hash-map '?name % '?targetarch arch) pkgnames))
-        depends (crux/q (crux/db @node)
-                        {:find '[?deps]
-                         :where '[[?e :pkgname ?name]
-                                  [?e :depends ?deps]
-                                  [?e :dxpb/targetarch ?targetarch]
-                                  ]
-                         :args all-pkg-query-args})
-        makedepends (crux/q (crux/db @node)
-                            {:find '[?deps]
-                             :where '[[?e :pkgname ?name]
-                                      [?e :makedepends ?deps]
-                                      [?e :dxpb/targetarch ?targetarch]
-                                      ]
-                             :args all-pkg-query-args})]
+  (if (empty? pkgnames)
+    #{}
+    (let [all-pkg-query-args (vec (map #(hash-map '?name % '?targetarch arch) pkgnames))
+          depends (crux/q (crux/db @node)
+                          {:find '[?deps]
+                           :where '[[?e :pkgname ?name]
+                                    [?e :depends ?deps]
+                                    [?e :dxpb/targetarch ?targetarch]
+                                    ]
+                           :args all-pkg-query-args})
+          makedepends (crux/q (crux/db @node)
+                              {:find '[?deps]
+                               :where '[[?e :pkgname ?name]
+                                        [?e :makedepends ?deps]
+                                        [?e :dxpb/targetarch ?targetarch]
+                                        ]
+                               :args all-pkg-query-args})]
 
-    (apply union (map set [(-> depends vec flatten) (-> makedepends vec flatten)]))))
+      (apply union (map set [(-> depends vec flatten) (-> makedepends vec flatten)])))))
 
 (defn pkg-is-noarch [pkgname]
   (db-guard)
