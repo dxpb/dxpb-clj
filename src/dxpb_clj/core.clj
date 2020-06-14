@@ -16,7 +16,7 @@
             [hiccup.core :as hiccup]
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version]]))
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -231,7 +231,7 @@
         {:keys [target-requirements host-requirements unfindable] :as needs} (pkgname-to-needs :pkgname pkgname :build-env build-env)
         host-packages-needed (apply merge (map need-to-filename host-requirements))
         target-packages-needed (apply merge (map need-to-filename target-requirements))
-        pkg-names-needed (concat (keys host-packages-needed) (keys target-packages-needed))
+        pkg-names-needed (set (concat (keys host-packages-needed) (keys target-packages-needed)))
         failure-reasons (concat (filter spec-not-parsable host-packages-needed) (filter spec-not-parsable target-packages-needed))
         ]
     {:files-needed pkg-names-needed
@@ -243,7 +243,7 @@
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def BASE_URL (atom "/"))
+(def BASE_URL (atom "/tmp/dev/"))
 
 (defn strip-trailing-slash [thing]
   (if (and (= \/ (last thing)) (> (count thing) 1))
@@ -264,7 +264,9 @@
                                      [:title (str "DXPB"
                                                   (if title-annendum (str " - " title-annendum)))]
                                      [:meta {:name :viewport :content "width=device-width"}]
-                                     [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]])
+                                     [:link {:rel :stylesheet :href "https://cdn.jsdelivr.net/gh/kognise/water.css@latest/dist/light.min.css"}]
+                                     [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]
+                                     ])
                         [:body
                          [:div.main resp]]])
     ring.util.response/response
@@ -272,14 +274,41 @@
 
 (defn main-interactive-page [req]
   (wrap-page [:main {}
+              [:a {:href (url "/v1/pre-build-requirements")} "All Packages"]
               ]))
+
+(defn all-packages-page [req]
+  (let [all-pkgnames (sort (list-of-all-pkgnames))
+        all-tgtarches (vec (set (map :XBPS_TARGET_ARCH ARCH_PAIRS)))
+        pairs-in-buckets (for [tgtarch all-tgtarches]
+                           (filter #(= (:XBPS_TARGET_ARCH %) tgtarch) ARCH_PAIRS))
+        arch-building-pairs-associative (zipmap all-tgtarches pairs-in-buckets)
+        pkg-list-table-head (into [:thead {} [:th "Package Name"]]
+                              (for [arch all-tgtarches]
+                                [:th {} "Target: " arch]))
+        give-pkg-list-table-row (fn [pkgname]
+                                  (into [:tr {} [:td pkgname]]
+                                        (for [tgt all-tgtarches]
+                                          (into [:td {}]
+                                                (for [arch-pair (get arch-building-pairs-associative tgt)]
+                                                  (let [hostarch (:XBPS_ARCH arch-pair)
+                                                        tgtarch (:XBPS_TARGET_ARCH arch-pair)
+                                                        iscross (:cross arch-pair)]
+                                                    [:a {:href (url "/v1/pre-build-requirements/" pkgname "/" hostarch "/" tgtarch "/" iscross)}
+                                                     (str "Host: " hostarch " Target: " tgtarch (if iscross " (cross)"))]))))))]
+    (wrap-page [:main {}
+                [:div {} [:h3 "All Packages"]
+                 (into [:table {} pkg-list-table-head]
+                   (map give-pkg-list-table-row all-pkgnames))]
+                ]
+               :title-annendum "All Packages")))
 
 (defn build-requirement-page [pkgname host-arch tgt-arch cross]
   (fn [req]
     (let [build-env {:XBPS_ARCH host-arch :XBPS_TARGET_ARCH tgt-arch :cross cross}
           build-env (if (> (.indexOf ARCH_PAIRS build-env) -1) build-env nil)
           version (pkg-version pkgname)
-          {:keys [files-needed unparsable-spec unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
+          {:keys [files-needed unparsable-specs unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
       (if (and version build-env)
         (wrap-page
           [:main {}
@@ -289,14 +318,9 @@
             [:tr [:td {} "Host Arch"] [:td {} host-arch]]
             [:tr [:td {} "Target Arch"] [:td {} tgt-arch]]
             [:tr [:td {} "Cross-build"] [:td {} cross]]]
-           (if (not (empty? files-needed))
-             (into [:table {} [:thead [:th {} "File Required"]]]
-                   (for [package-file files-needed]
-                     [:tr {} [:td {} package-file]]))
-             [:p {} "No dependencies"])
-           (if (not (empty? unparsable-spec))
-             (into [:table {} [:thead [:th {} "DXPB Confused"]]]
-                   (for [package-file unparsable-spec]
+           (if (not (empty? unparsable-specs))
+             (into [:table {} [:thead [:th {} "Confusing requirements"]]]
+                   (for [package-file unparsable-specs]
                      [:tr {} [:td {} package-file]]))
              [:p {} "All dependencies could be found as packages"])
            (if (not (empty? unavailable-packages))
@@ -304,6 +328,11 @@
                    (for [[unavailable info] unavailable-packages]
                      [:tr {} [:td {} unavailable] [:td {} (str info)]]))
              [:p {} "Versions were sufficient for all dependencies"])
+           (if (not (empty? files-needed))
+             (into [:table {} [:thead [:th {} "File Required"]]]
+                   (for [package-file files-needed]
+                     [:tr {} [:td {} package-file]]))
+             [:p {} "No dependencies"])
            ]
           :title-annendum (str pkgname " - needs"))
         (assoc
@@ -316,6 +345,7 @@
 (comp/defroutes dxpb-routes
   (comp/context (strip-trailing-slash @BASE_URL) []
 		(comp/GET "/" [] main-interactive-page)
+		(comp/GET "/v1/pre-build-requirements" [] all-packages-page)
 		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))
                 ))
 

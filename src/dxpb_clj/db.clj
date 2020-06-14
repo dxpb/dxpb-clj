@@ -53,6 +53,12 @@
                   :where '[[?e :pkgname ?name]]
                   :args [{'?name pkgname}]}))))
 
+(defn list-of-all-pkgnames []
+  (db-guard)
+  (apply concat (crux/q (crux/db @node)
+                        {:find '[?name]
+                         :where '[[?e :pkgname ?name]]})))
+
 (defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as build-profile}]
   (db-guard)
   (crux/q (crux/db @node)
