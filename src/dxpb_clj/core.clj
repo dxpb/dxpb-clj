@@ -16,7 +16,7 @@
             [hiccup.core :as hiccup]
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames]]))
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -274,11 +274,14 @@
 
 (defn main-interactive-page [req]
   (wrap-page [:main {}
-              [:a {:href (url "/v1/pre-build-requirements")} "All Packages"]
+              [:div
+               [:a {:href (url "/v1/pre-build-requirements")} "All Packages"]]
+              [:div
+               [:a {:href (url "/v1/pre-build-requirements-bootstrap")} "Bootstrap Packages"]]
               ]))
 
-(defn all-packages-page [req]
-  (let [all-pkgnames (sort (list-of-all-pkgnames))
+(defn pkgnames-list-page [req list-of-pkgnames title-annendum]
+  (let [all-pkgnames list-of-pkgnames
         all-tgtarches (vec (set (map :XBPS_TARGET_ARCH ARCH_PAIRS)))
         pairs-in-buckets (for [tgtarch all-tgtarches]
                            (filter #(= (:XBPS_TARGET_ARCH %) tgtarch) ARCH_PAIRS))
@@ -297,11 +300,17 @@
                                                     [:a {:href (url "/v1/pre-build-requirements/" pkgname "/" hostarch "/" tgtarch "/" iscross)}
                                                      (str "Host: " hostarch " Target: " tgtarch (if iscross " (cross)"))]))))))]
     (wrap-page [:main {}
-                [:div {} [:h3 "All Packages"]
+                [:div {} [:h3 title-annendum]
                  (into [:table {} pkg-list-table-head]
                    (map give-pkg-list-table-row all-pkgnames))]
                 ]
-               :title-annendum "All Packages")))
+               :title-annendum title-annendum)))
+
+(defn all-packages-page [req]
+  (pkgnames-list-page req (sort (list-of-all-pkgnames)) "All Packages"))
+
+(defn bootstrap-packages-page [req]
+  (pkgnames-list-page req (sort (list-of-bootstrap-pkgnames)) "Bootstrap Packages"))
 
 (defn build-requirement-page [pkgname host-arch tgt-arch cross]
   (fn [req]
@@ -346,6 +355,7 @@
   (comp/context (strip-trailing-slash @BASE_URL) []
 		(comp/GET "/" [] main-interactive-page)
 		(comp/GET "/v1/pre-build-requirements" [] all-packages-page)
+		(comp/GET "/v1/pre-build-requirements-bootstrap" [] bootstrap-packages-page)
 		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))
                 ))
 

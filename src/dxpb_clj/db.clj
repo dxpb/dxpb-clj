@@ -59,6 +59,13 @@
                         {:find '[?name]
                          :where '[[?e :pkgname ?name]]})))
 
+(defn list-of-bootstrap-pkgnames []
+  (db-guard)
+  (apply concat (crux/q (crux/db @node)
+                        {:find '[?name]
+                         :where '[[?e :pkgname ?name]
+                                  [?e :bootstrap ?ignored]]})))
+
 (defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as build-profile}]
   (db-guard)
   (crux/q (crux/db @node)
