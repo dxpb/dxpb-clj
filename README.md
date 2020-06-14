@@ -24,7 +24,22 @@ FIXME: listing of options this app accepts.
 
 ...
 
-### Any Other Sections
+### Assumptions Built In
+
+If you want to use this on a package manager other than xbps, with xbps-src,
+please consider the following assumptions that are baked deep into the
+codebase. They hold true for xbps, they may not hold true for your application.
+
+1. Every package has exactly one current version (a previous version may be in
+   the repos).
+2. That version is the same across all builds
+3. Every package has a unique package name.
+4. Packages have dependencies that must exist before they can build.
+5. Once a package is built for a target architecture, it's available on that
+   target architecture.
+6. You have a way to ensure a package is available to your builders once it's
+   available to the DXPB server.
+
 ### That You Think
 ### Might be Useful
 
