@@ -236,7 +236,9 @@
         ]
     {:files-needed pkg-names-needed
      :unparsable-specs unfindable
-     :unavailable-packages failure-reasons}
+     :unavailable-packages failure-reasons
+     :host-requirements host-requirements
+     :target-requirements target-requirements}
     ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
