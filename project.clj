@@ -5,8 +5,8 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [org.clojure/core.async "1.1.587"]
-                 [juxt/crux-core "20.05-1.8.4-alpha"]
-                 [juxt/crux-rocksdb "20.05-1.8.4-alpha"]
+                 [juxt/crux-core "20.09-1.12.1-beta"]
+                 [juxt/crux-rocksdb "20.09-1.12.1-beta"]
                  [yogthos/config "1.1.7"]
                  [compojure "1.6.1"]
                  [ring/ring-core "1.8.1"]

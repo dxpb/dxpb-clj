@@ -12,9 +12,14 @@
     (first in)))
 
 (defn start-standalone-node ^crux.api.ICruxAPI [storage-dir]
-  (crux/start-node {:crux.node/topology '[crux.standalone/topology
-                                          crux.kv.rocksdb/kv-store]
-                    :crux.kv/db-dir (str (io/file storage-dir "rocksdb"))}))
+  (let [mkdatadir #(str (io/file storage-dir %))]
+    (crux/start-node {:crux/tx-log {:kv-store {:crux/module 'crux.rocksdb/->kv-store
+                                               :db-dir (mkdatadir "tx-log")}}
+                      :crux/document-store {:kv-store {:crux/module 'crux.rocksdb/->kv-store
+                                                       :db-dir (mkdatadir "docs")}}
+                      :crux/index-store {:kv-store {:crux/module 'crux.rocksdb/->kv-store
+                                                    :db-dir (mkdatadir "indexes")}}
+                      })))
 
 (defn get-storage-dir! []
   (or (:DXPB_SERVER_DIR env)
