@@ -16,7 +16,15 @@
             [hiccup.core :as hiccup]
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]))
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
+            [dxpb-clj.repo-reader :refer [get-repo-reader]]))
+
+(def REPO_READER (atom nil))
+
+(defn repo-reader [& {:keys [force] :or {force false}}]
+  (if (or (nil? @REPO_READER) force)
+    (reset! REPO_READER (get-repo-reader :file+repodata))
+    @REPO_READER))
 
 (def XBPS_SRC_WORKERS (atom 0))
 
@@ -221,10 +229,33 @@
                                           :version version
                                           :specs (:spec need))
                    true)
-        specs-ok (if (true? specs-ok) specs-ok
+        specs-ok (if (true? specs-ok)
+                   specs-ok
                    (:spec need))
         ]
     {(str pkgname "-" version "." arch ".xbps") specs-ok}))
+
+(defn need-to-pkg-availability [[pkgname-as-key need]]
+  (let [pkgname (name pkgname-as-key)
+        version (pkg-version pkgname)
+        arch (:arch need)
+        needs-verification (not (:version-not-specified need))
+        specs-ok (if needs-verification
+                   (verify-pkg-version-ok :pkgname pkgname
+                                          :version version
+                                          :specs (:spec need))
+                   true)
+        pkg-in-repo ((:package-in-repo? (repo-reader))
+                     :pkgname pkgname
+                     :version version
+                     :arch arch)
+        ]
+    {:pkgname pkgname
+     :version version
+     :arch arch
+     :in-repo pkg-in-repo
+     :spec-ok specs-ok
+     :spec (:spec need)}))
 
 (defn pkg-requires-to-build [& {:keys [pkgname build-env] :as pkg-spec}]
   (let [spec-not-parsable (fn [known-data] (not (true? (val known-data))))
@@ -232,14 +263,15 @@
         host-packages-needed (apply merge (map need-to-filename host-requirements))
         target-packages-needed (apply merge (map need-to-filename target-requirements))
         pkg-names-needed (set (concat (keys host-packages-needed) (keys target-packages-needed)))
+        pkgs-needed (concat (map need-to-pkg-availability host-requirements) (map need-to-pkg-availability target-requirements))
         failure-reasons (concat (filter spec-not-parsable host-packages-needed) (filter spec-not-parsable target-packages-needed))
         ]
     {:files-needed pkg-names-needed
      :unparsable-specs unfindable
      :unavailable-packages failure-reasons
      :host-requirements host-requirements
-     :target-requirements target-requirements}
-    ))
+     :target-requirements target-requirements
+     :pkgs-needed pkgs-needed}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -319,7 +351,7 @@
     (let [build-env {:XBPS_ARCH host-arch :XBPS_TARGET_ARCH tgt-arch :cross cross}
           build-env (if (> (.indexOf ARCH_PAIRS build-env) -1) build-env nil)
           version (pkg-version pkgname)
-          {:keys [files-needed unparsable-specs unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
+          {:keys [pkgs-needed files-needed unparsable-specs unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
       (if (and version build-env)
         (wrap-page
           [:main {}
@@ -344,6 +376,16 @@
                    (for [package-file files-needed]
                      [:tr {} [:td {} package-file]]))
              [:p {} "No dependencies"])
+           (if (not (empty? pkgs-needed))
+             (into [:table {} [:thead [:th {} "Package Required Name"] [:th {} "Version"] [:th {} "Arch"] [:th {} "Present"]]]
+                   (for [package-detail pkgs-needed]
+                     [:tr {}
+                      [:td {} (:pkgname package-detail)]
+                      [:td {} (:version package-detail)]
+                      [:td {} (:arch package-detail)]
+                      [:td {} (:in-repo package-detail)]
+                      ]))
+             [:p {} "No dependencies"])
            ]
           :title-annendum (str pkgname " - needs"))
         (assoc
@@ -356,6 +398,7 @@
 (comp/defroutes dxpb-routes
   (comp/context (strip-trailing-slash @BASE_URL) []
 		(comp/GET "/" [] main-interactive-page)
+		(comp/GET "/reset-caches" [] (fn [req] (repo-reader :force true) (main-interactive-page [req])))
 		(comp/GET "/v1/pre-build-requirements" [] all-packages-page)
 		(comp/GET "/v1/pre-build-requirements-bootstrap" [] bootstrap-packages-page)
 		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))
