@@ -17,6 +17,7 @@
   :main ^:skip-aot dxpb-clj.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}
-             :dev {:dependencies [[ring/ring-devel "1.8.1"]]}}
-  :ring {:handler dxpb-clj.core/rosie}
-  :plugins [[lein-ring "0.12.5"]])
+             :dev {:dependencies [[ring/ring-devel "1.8.1"]]
+                   :plugins [[lein-ring "0.12.5"]
+                             [lein-kibit "0.1.8"]]}}
+  :ring {:handler dxpb-clj.core/rosie})

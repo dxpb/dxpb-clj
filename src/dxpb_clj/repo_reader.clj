@@ -14,7 +14,7 @@
          (str (:dxpb-binpkg-dir env) "/")
          io/file
          .exists)
-    (->> (:dxpb-repo-dir env)
+    (->> (:dxpb-binpkg-dir env)
          str
          io/file
          .list
@@ -22,15 +22,16 @@
          seq)))
 
 (defn- package-in-repo-from-xbps-repodata [& {:keys [pkgname version arch exact-version] :or {exact-version true}}]
-  (let [{:keys [exit out err]} (with-sh-env {:XBPS_ARCH arch}
+  (let [repodata-dir (or (:dxpb-repodata-dir env) (:dxpb-binpkg-dir env))
+        {:keys [exit out err]} (with-sh-env {:XBPS_ARCH arch}
                                  (sh "xbps-query"
                                      "-i"
-                                     (str "--repository=" (:dxpb-repodata-dir env))
+                                     (str "--repository=" repodata-dir)
                                      "-S"
                                      pkgname
                                      "--property"
                                      "pkgver"))
-        pkg-present (= exit 0)]
+        pkg-present (zero? exit)]
     (when (seq err) ;; can be an empty string and not worth printing
       (prn err))
     (when pkg-present

@@ -1,22 +1,17 @@
 (ns dxpb-clj.core
   (:gen-class)
   (:import java.io.File)
-  (:require [clojure.core.async :as async :refer [>!! <!! >! <! go chan thread pipeline-async close!]]
+  (:require [clojure.core.async :as async :refer [>!! <!! chan thread pipeline-async close!]]
             [clojure.java.shell :as shell :refer [sh]]
-            [clojure.string :refer [split trim]]
-            [clojure.java.io :refer [writer]]
-            [clojure.pprint :refer [pprint]]
-            [clojure.set :as set]
+            [clojure.string :refer [split trim join capitalize]]
+            [clojure.set :refer [union difference rename-keys]]
             [compojure.core :as comp]
-            [compojure.route :as comproute]
             [ring.adapter.jetty :refer [run-jetty]]
             [ring.middleware.defaults :as rd]
-            [ring.middleware.multipart-params :as mp]
             [ring.util.response :as ring-response]
-            [hiccup.core :as hiccup]
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-pkg-key get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
+            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
             [dxpb-clj.repo-reader :refer [get-repo-reader]]))
 
 (def REPO_READER (atom nil))
@@ -46,7 +41,7 @@
                  ])
 
 (defn graph-is-read []
-  (= 0 @XBPS_SRC_WORKERS))
+  (zero? @XBPS_SRC_WORKERS))
 
 (defn sh-wrap [& {:keys [env dir cmd]}]
   (shell/with-sh-env env
@@ -59,24 +54,23 @@
                          ::can-be-built (= 0 (:exit show-avail))}
                         (apply merge
                                (->> (for [pkg-variable (split (:out show-pkg-info) #"\n\n")]
-                                      (clojure.string/split pkg-variable #"\s+"))
+                                      (split pkg-variable #"\s+"))
                                     (filter #(> (count %) 1)) ;; is set
-                                    (map #(hash-map (keyword (apply str (drop-last (first %)))) (rest %)))))
+                                    (map #(hash-map (keyword (join (drop-last (first %)))) (rest %)))))
                         )
         version-str (str (first (:version new-info)) "_" (first (:revision new-info)))]
     (-> new-info
         (assoc :version version-str)
-        (dissoc :revision)
-        )))
+        (dissoc :revision))))
 
 (defn parse-pkg-info [info]
-  (let [new-info (apply merge (for [arch-info (-> info :raw-info)]
+  (let [new-info (apply merge (for [arch-info (:raw-info info)]
                                 {(:arch-set arch-info)
                                  (merge
                                    (parse-show-pkg-info arch-info)
                                    {:pkgname (:pkgname info)})})) ;; this is wrong for our uses for subpkgs, so we overwrite pkgname
         version (let [versions (set (apply concat (for [[_ info] new-info] (for [[_ info] info] (:version info)))))]
-                  (if (= 1 (count versions))
+                  (when (= 1 (count versions))
                     (first versions)))
         ]
     {:pkgname (:pkgname info)
@@ -102,14 +96,11 @@
                                          }))
                                      ))})]
         (>!! result output))
-      (close! result)
-      )
-    ))
+      (close! result))))
 
 (defn chan-write-all [c in]
-  (if in
-    (do
-      (async/put! c (first in) (fn [_] (chan-write-all c (next in)))))))
+  (when in
+    (async/put! c (first in) (fn [_] (chan-write-all c (next in))))))
 
 (defn bootstrap-pkg-list [path]
   (let [file-list (map #(.getName %) (.listFiles (File. (str path "/srcpkgs"))))
@@ -123,9 +114,8 @@
       (println done "/" total-num-files)
       (let [new-info (<!! pkginfo)]
         (add-pkg (:pkgname new-info) (:info new-info)))
-      (if (not= (inc done) total-num-files)
-        (recur (inc done)))
-      )))
+      (when (not= (inc done) total-num-files)
+        (recur (inc done))))))
 
 ;; XXX: Write tests, testing pkgnames found in templates as written
 ;; Valid ones get a pkgname out. Invalid ones get a nil.
@@ -139,12 +129,11 @@
               (>= (.indexOf pkgname "=") 0)
               )
         (let [{:keys [out exit]} (sh "xbps-uhelper" "getpkgdepname" pkgname)]
-          (if (= 0 exit)
+          (when (zero? exit)
             {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))
         (let [{:keys [out exit]} (sh "xbps-uhelper" "getpkgname" pkgname)]
-          (if (= 0 exit)
-            {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))
-        ))))
+          (when (zero? exit)
+            {:as-key (keyword (trim out)) :version-specified true :spec pkgname}))))))
 
 ;; XXX: write spec: in must be seq of strings or nil
 ;; out must be {:found LIST :unfindable LIST}
@@ -175,20 +164,18 @@
     (and (not (coll? (:spec a))) (not (coll? (:spec b)))) {:spec (vector (:spec a) (:spec b)) :version-not-specified false :arch (:arch a)}
     ;; exactly 1 is a sequence
     (coll? (:spec a)) {:spec (conj (:spec a) (:spec b)) :version-not-specified false :arch (:arch a)}
-    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false :arch (:arch a)}
-    ))
+    (coll? (:spec b)) {:spec (conj (:spec b) (:spec a)) :version-not-specified false :arch (:arch a)}))
 
-(defn obtain-all-deps-of-pkgs-for-arch [& {:keys [pkgnames arch] :as what}]
+(defn obtain-all-deps-of-pkgs-for-arch [& {:keys [pkgnames arch]}]
   (loop [next-specs (set pkgnames)
          seen-specs #{}]
-    (if (not (empty? next-specs))
-      (let [unseen-specs (set/difference next-specs seen-specs)]
-        (recur (get-all-needs-for-arch :pkgnames unseen-specs :arch arch) (set/union unseen-specs seen-specs)))
-      (obtain-pkgnames seen-specs arch))
-    ))
+    (if (seq next-specs)
+      (let [unseen-specs (difference next-specs seen-specs)]
+        (recur (get-all-needs-for-arch :pkgnames unseen-specs :arch arch) (union unseen-specs seen-specs)))
+      (obtain-pkgnames seen-specs arch))))
 
 (defn pkgname-to-needs [& {:keys [pkgname build-env]}]
-  (if-let [pkgname-as-specified (pkgname-to-key pkgname)]
+  (when-let [pkgname-as-specified (pkgname-to-key pkgname)]
     (let [pkgname (:as-key pkgname-as-specified)
           pkg (get-pkg-data (name pkgname) build-env)
           {:keys [found unfindable]} (obtain-all-deps-of-pkgs-for-arch :pkgnames (:hostmakedepends pkg) :arch (:XBPS_ARCH build-env))
@@ -199,25 +186,18 @@
           unfound-deps (concat unfindable unfound-deps)]
       {:host-requirements found-hostneeds
        :target-requirements found-targetneeds
-       :unfindable unfound-deps
-       }
-      ))
-  )
+       :unfindable unfound-deps})))
 
 ;; Pure function. Can be memoized.
 (defn verify-pkg-version-ok [& {:keys [pkgname version specs spec]}]
   (if (nil? spec)
     (if (coll? specs)
       (empty? (filter false? (map #(verify-pkg-version-ok :pkgname pkgname :version version :spec %) specs)))
-      (verify-pkg-version-ok :pkgname pkgname :version version :spec specs)
-      )
+      (verify-pkg-version-ok :pkgname pkgname :version version :spec specs))
     (let [;; when running the below command, (= exit 1) is a match.
           our-pkg-spec (str pkgname "-" version)
-          {:keys [exit]} (sh "xbps-uhelper" "pkgmatch" our-pkg-spec spec)
-          ]
-      (= exit 1)
-      ))
-  )
+          {:keys [exit]} (sh "xbps-uhelper" "pkgmatch" our-pkg-spec spec)]
+      (= exit 1))))
 
 (defn need-to-filename [[pkgname-as-key need]]
   (let [pkgname (name pkgname-as-key)
@@ -231,8 +211,7 @@
                    true)
         specs-ok (if (true? specs-ok)
                    specs-ok
-                   (:spec need))
-        ]
+                   (:spec need))]
     {(str pkgname "-" version "." arch ".xbps") specs-ok}))
 
 (defn need-to-pkg-availability [[pkgname-as-key need]]
@@ -257,9 +236,9 @@
      :spec-ok specs-ok
      :spec (:spec need)}))
 
-(defn pkg-requires-to-build [& {:keys [pkgname build-env] :as pkg-spec}]
+(defn pkg-requires-to-build [& {:keys [pkgname build-env]}]
   (let [spec-not-parsable (fn [known-data] (not (true? (val known-data))))
-        {:keys [target-requirements host-requirements unfindable] :as needs} (pkgname-to-needs :pkgname pkgname :build-env build-env)
+        {:keys [target-requirements host-requirements unfindable]} (pkgname-to-needs :pkgname pkgname :build-env build-env)
         host-packages-needed (apply merge (map need-to-filename host-requirements))
         target-packages-needed (apply merge (map need-to-filename target-requirements))
         pkg-names-needed (set (concat (keys host-packages-needed) (keys target-packages-needed)))
@@ -285,44 +264,44 @@
     thing))
 
 (defn url [& args]
-  (let [append (clojure.string/join (map #(if (keyword? %) (name %) %) args))]
+  (let [append (join (map #(if (keyword? %) (name %) %) args))]
     (if (and (= \/ (first append)) (= \/ (last @BASE_URL)))
       (str @BASE_URL (subs append 1))
       (if (and (not= \/ (first append)) (not= \/ (last @BASE_URL)))
         (str @BASE_URL "/" append)
         (str @BASE_URL append)))))
 
-(defn wrap-page [resp & {:keys [title-annendum]}]
-  (->
-    (hiccup-page/html5 [:html (into [:head
-                                     [:title (str "DXPB"
-                                                  (if title-annendum (str " - " title-annendum)))]
-                                     [:meta {:name :viewport :content "width=device-width"}]
-                                     [:link {:rel :stylesheet :href "https://cdn.jsdelivr.net/gh/kognise/water.css@latest/dist/light.min.css"}]
-                                     [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]
-                                     ])
-                        [:body
-                         [:div.main resp]]])
-    ring.util.response/response
-    (ring.util.response/content-type "text/html")))
+(defn hiccup->response [{:keys [hiccup-page-list title-annendum]}]
+  (-> [:html (into [:head
+                    [:title (str "DXPB"
+                                 (when title-annendum (str " - " title-annendum)))]
+                    [:meta {:name :viewport :content "width=device-width"}]
+                    [:link {:rel :stylesheet :href "https://cdn.jsdelivr.net/gh/kognise/water.css@latest/dist/light.min.css"}]
+                    [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]])
+       [:body
+        [:main {} hiccup-page-list]]]
+      hiccup-page/html5
+      ring.util.response/response
+      (ring.util.response/content-type "text/html")))
 
 (defn main-interactive-page [req]
-  (wrap-page [:main {}
-              [:div
-               [:a {:href (url "/v1/pre-build-requirements")} "All Packages"]]
-              [:div
-               [:a {:href (url "/v1/pre-build-requirements-bootstrap")} "Bootstrap Packages"]]
-              ]))
+  (-> req
+      (assoc :hiccup-page-list
+             (list [:div
+                    [:a {:href (url "/v1/pre-build-requirements")} "All Packages"]]
+                   [:div
+                    [:a {:href (url "/v1/pre-build-requirements-bootstrap")} "Bootstrap Packages"]]))
+      hiccup->response))
 
-(defn pkgnames-list-page [req list-of-pkgnames title-annendum]
-  (let [all-pkgnames list-of-pkgnames
+(defn pkg-list->table [{:keys [pkg-list title-annendum] :as req}]
+  (let [all-pkgnames pkg-list
         all-tgtarches (vec (set (map :XBPS_TARGET_ARCH ARCH_PAIRS)))
         pairs-in-buckets (for [tgtarch all-tgtarches]
                            (filter #(= (:XBPS_TARGET_ARCH %) tgtarch) ARCH_PAIRS))
         arch-building-pairs-associative (zipmap all-tgtarches pairs-in-buckets)
         pkg-list-table-head (into [:thead {} [:th "Package Name"]]
-                              (for [arch all-tgtarches]
-                                [:th {} "Target: " arch]))
+                                  (for [arch all-tgtarches]
+                                    [:th {} "Target: " arch]))
         give-pkg-list-table-row (fn [pkgname]
                                   (into [:tr {} [:td pkgname]]
                                         (for [tgt all-tgtarches]
@@ -332,77 +311,127 @@
                                                         tgtarch (:XBPS_TARGET_ARCH arch-pair)
                                                         iscross (:cross arch-pair)]
                                                     [:a {:href (url "/v1/pre-build-requirements/" pkgname "/" hostarch "/" tgtarch "/" iscross)}
-                                                     (str "Host: " hostarch " Target: " tgtarch (if iscross " (cross)"))]))))))]
-    (wrap-page [:main {}
-                [:div {} [:h3 title-annendum]
-                 (into [:table {} pkg-list-table-head]
-                   (map give-pkg-list-table-row all-pkgnames))]
-                ]
-               :title-annendum title-annendum)))
+                                                     (str "Host: " hostarch " Target: " tgtarch (when iscross " (cross)"))]))))))
+        table-to-return [:div {} [:h3 title-annendum]
+                         (into [:table {} pkg-list-table-head]
+                               (map give-pkg-list-table-row all-pkgnames))]]
+    (assoc req :table table-to-return)))
 
-(defn all-packages-page [req]
-  (pkgnames-list-page req (sort (list-of-all-pkgnames)) "All Packages"))
+(defn packages-page [kind]
+  (let [package-names (case kind
+                        :all (list-of-all-pkgnames)
+                        :bootstrap (list-of-bootstrap-pkgnames))]
+    (fn [req]
+      (-> req
+          (assoc :pkg-list (sort package-names))
+          (assoc :title-annendum (str (capitalize (name kind)) " Packages"))
+          pkg-list->table
+          (update :table list)
+          (rename-keys {:table :hiccup-page-list})
+          hiccup->response))))
 
-(defn bootstrap-packages-page [req]
-  (pkgnames-list-page req (sort (list-of-bootstrap-pkgnames)) "Bootstrap Packages"))
+(defn pass-if-build-env-real [in]
+  (when (> (.indexOf ARCH_PAIRS (::build-env in)) -1)
+    in))
+
+(defn pass-if-version-real [in]
+  (when (::version in)
+    in))
+
+(defn inject-summary-table [{::keys [pkgname version]
+                             {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]} ::build-env
+                             :as in}]
+  (assoc in
+         ::summary-table
+         [:table {}
+          [:tr [:td {} "Package name"] [:td {} pkgname]]
+          [:tr [:td {} "Current Version"] [:td {} version]]
+          [:tr [:td {} "Host Arch"] [:td {} XBPS_ARCH]]
+          [:tr [:td {} "Target Arch"] [:td {} XBPS_TARGET_ARCH]]
+          [:tr [:td {} "Cross-build"] [:td {} cross]]]))
+
+(defn inject-dumb-package-list-table [{:keys [table-headers table-body-from table-body-empty conj-tables-to] :as in}]
+  (update in
+          conj-tables-to
+          conj
+          (if (seq table-body-from)
+            (into [:table {} [:thead {} (map #(vector :th {} %) table-headers)]]
+                  (for [table-body-row table-body-from]
+                    [:tr {} (map #(vector :td {} %) table-body-row)]))
+            table-body-empty)))
+
+(defn assemble-build-requirement-page [{::keys [summary-table] :as in}]
+  (assoc in :hiccup-page-list (list summary-table)))
+
+(defn copy-val [in from to]
+  ((if (vector? to)
+     assoc-in
+     assoc)
+   in
+   to
+   (if (vector? from)
+     (get-in in from)
+     (get in from))))
 
 (defn build-requirement-page [pkgname host-arch tgt-arch cross]
   (fn [req]
-    (let [build-env {:XBPS_ARCH host-arch :XBPS_TARGET_ARCH tgt-arch :cross cross}
-          build-env (if (> (.indexOf ARCH_PAIRS build-env) -1) build-env nil)
-          version (pkg-version pkgname)
-          {:keys [pkgs-needed files-needed unparsable-specs unavailable-packages]} (pkg-requires-to-build :pkgname pkgname :build-env build-env)]
-      (if (and version build-env)
-        (wrap-page
-          [:main {}
-           [:table {}
-            [:tr [:td {} "Package name"] [:td {} pkgname]]
-            [:tr [:td {} "Current Version"] [:td {} version]]
-            [:tr [:td {} "Host Arch"] [:td {} host-arch]]
-            [:tr [:td {} "Target Arch"] [:td {} tgt-arch]]
-            [:tr [:td {} "Cross-build"] [:td {} cross]]]
-           (if (not (empty? unparsable-specs))
-             (into [:table {} [:thead [:th {} "Confusing requirements"]]]
-                   (for [package-file unparsable-specs]
-                     [:tr {} [:td {} package-file]]))
-             [:p {} "All dependencies could be found as packages"])
-           (if (not (empty? unavailable-packages))
-             (into [:table {} [:thead [:th {} "Unavailable Dependency"] [:th {} "Reason"]]]
-                   (for [[unavailable info] unavailable-packages]
-                     [:tr {} [:td {} unavailable] [:td {} (str info)]]))
-             [:p {} "Versions were sufficient for all dependencies"])
-           (if (not (empty? files-needed))
-             (into [:table {} [:thead [:th {} "File Required"]]]
-                   (for [package-file files-needed]
-                     [:tr {} [:td {} package-file]]))
-             [:p {} "No dependencies"])
-           (if (not (empty? pkgs-needed))
-             (into [:table {} [:thead [:th {} "Package Required Name"] [:th {} "Version"] [:th {} "Arch"] [:th {} "Present"]]]
-                   (for [package-detail pkgs-needed]
-                     [:tr {}
-                      [:td {} (:pkgname package-detail)]
-                      [:td {} (:version package-detail)]
-                      [:td {} (:arch package-detail)]
-                      [:td {} (:in-repo package-detail)]
-                      ]))
-             [:p {} "No dependencies"])
-           ]
-          :title-annendum (str pkgname " - needs"))
-        (assoc
-          (wrap-page
-            [:main {}
-             [:h3 "Package or build environment could not be found"]] :title-annendum "404")
-          :status 404)))
-    ))
+    (let [build-env {:XBPS_ARCH host-arch :XBPS_TARGET_ARCH tgt-arch :cross cross}]
+      (if-let [resp (some-> req
+                            (assoc :title-annendum (str pkgname " - needs"))
+                            (assoc ::build-env build-env)
+                            pass-if-build-env-real
+                            (assoc ::version (pkg-version pkgname))
+                            pass-if-version-real
+                            (assoc ::pkgname pkgname)
+                            (assoc ::dep-details (pkg-requires-to-build :pkgname pkgname :build-env build-env))
+                            inject-summary-table
+                            (rename-keys {::summary-table :hiccup-page-list})
+                            (update :hiccup-page-list vector) ;; temporary so conj appends
+                            (assoc :conj-tables-to :hiccup-page-list)
+                            ;; Dependencies where DXPB failed to parse
+                            (assoc :table-headers ["Confusing Requirements"])
+                            (assoc :table-body-empty [:p {} "All dependencies could be found as packages"])
+                            (copy-val [::dep-details :unparsable-specs] :table-body-from)
+                            inject-dumb-package-list-table
+                            ;; Dependencies that can never be met
+                            (assoc :table-headers ["Unavailable Dependency" "Reason"])
+                            (assoc :table-body-empty [:p {} "Versions were sufficient for all dependencies"])
+                            (copy-val [::dep-details :unavailable-packages] :table-body-from)
+                            inject-dumb-package-list-table
+                            ;; Just the files needed
+                            (assoc :table-headers ["File Required"])
+                            (assoc :table-body-empty [:p {} "No Dependencies"])
+                            (update-in [::dep-details :files-needed] (fn [what] (map #(vector %) what)))
+                            (copy-val [::dep-details :files-needed] :table-body-from)
+                            inject-dumb-package-list-table
+                            ;; To be precise, and whether the packages are available
+                            (assoc :table-headers ["Package Required" "Version" "Arch" "Present"])
+                            (assoc :table-body-empty nil)
+                            (update-in [::dep-details :pkgs-needed] (fn [what] (map #(list (:pkgname %)
+                                                                                           (:version %)
+                                                                                           (:arch %)
+                                                                                           (:in-repo %))
+                                                                                    what)))
+                            (copy-val [::dep-details :pkgs-needed] :table-body-from)
+                            inject-dumb-package-list-table
+                            ;; Now on to making this a page.
+                            ;; First, ->list so not a hiccup element
+                            (update :hiccup-page-list list*)
+                            hiccup->response)]
+        resp
+        (-> req
+            (assoc :hiccup-page-list (list [:h3 "Package or build environment could not be found"]))
+            (assoc :title-annendum "404")
+            hiccup->response
+            (assoc :status 404))))))
 
 (comp/defroutes dxpb-routes
   (comp/context (strip-trailing-slash @BASE_URL) []
 		(comp/GET "/" [] main-interactive-page)
 		(comp/GET "/reset-caches" [] (fn [req] (repo-reader :force true) (main-interactive-page [req])))
-		(comp/GET "/v1/pre-build-requirements" [] all-packages-page)
-		(comp/GET "/v1/pre-build-requirements-bootstrap" [] bootstrap-packages-page)
-		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))
-                ))
+		(comp/GET "/v1/pre-build-requirements" [] (packages-page :all))
+		(comp/GET "/v1/pre-build-requirements-bootstrap" [] (packages-page :bootstrap))
+		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))))
 
 (defn ignore-trailing-slash
   "Modifies the request uri before calling the handler.
@@ -412,15 +441,18 @@
   [handler]
   (fn [request]
     (let [uri (:uri request)]
-      (handler (assoc request :uri (if (and (not (= "/" uri))
+      (handler (assoc request :uri (if (and (not= "/" uri)
                                             (.endsWith uri "/"))
                                      (subs uri 0 (dec (count uri)))
                                      uri))))))
 
 (defn resp-404 [req]
-  (assoc
-    (wrap-page [:main {} [:h3 "404 - route not found"]] :title-annendum "404")
-    :status 404))
+  (-> req
+      (assoc :hiccup-page-list (list [:h3 "404 - route not found"]
+                                     [:a {:href (url)} [:h3 {} "Home"]]))
+      (assoc :title-annendum "404")
+      hiccup->response
+      (assoc :status 404)))
 
 (defn wrap-default-404 [handler]
   (fn [req]
@@ -432,12 +464,11 @@
   (-> dxpb-routes
       ignore-trailing-slash
       wrap-default-404
-      (rd/wrap-defaults (-> rd/site-defaults (assoc :proxy true)))
-      ))
+      (rd/wrap-defaults (assoc rd/site-defaults :proxy true))))
 
 (defn -main
   "I don't do a whole lot ... yet."
-  [& args]
+  [& _args]
   (let [port (Integer/valueOf (or (System/getenv "DXPB_PORT") "3001"))]
     (println "Running server now on port " port)
     (run-jetty rosie {:port port})))

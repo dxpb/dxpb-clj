@@ -8,7 +8,7 @@
 (def node (atom nil))
 
 (defn- only [in]
-  (if (= 1 (count in))
+  (when (= 1 (count in))
     (first in)))
 
 (defn start-standalone-node ^crux.api.ICruxAPI [storage-dir]
@@ -26,7 +26,7 @@
       "./datadir"))
 
 (defn db-guard []
-  (if (nil? @node)
+  (when (nil? @node)
     (reset! node (start-standalone-node (get-storage-dir!)))))
 
 (defn add-pkg [pkgname pkginfo]
@@ -52,11 +52,11 @@
 
 (defn does-pkgname-exist [pkgname]
   (db-guard)
-  (not (empty?
-         (crux/q (crux/db @node)
-                 {:find '[?e]
-                  :where '[[?e :pkgname ?name]]
-                  :args [{'?name pkgname}]}))))
+  (seq
+    (crux/q (crux/db @node)
+            {:find '[?e]
+             :where '[[?e :pkgname ?name]]
+             :args [{'?name pkgname}]})))
 
 (defn list-of-all-pkgnames []
   (db-guard)
@@ -71,27 +71,24 @@
                          :where '[[?e :pkgname ?name]
                                   [?e :bootstrap ?ignored]]})))
 
-(defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as build-profile}]
+(defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false}}]
   (db-guard)
   (crux/q (crux/db @node)
                  {:find '[?e]
                   :where '[[?e :pkgname ?name]
                            [?e :dxpb/hostarch ?hostarch]
                            [?e :dxpb/targetarch ?targetarch]
-                           [?e :dxpb/crossbuild ?cross]
-                           ]
+                           [?e :dxpb/crossbuild ?cross]]
                   :args [{'?name pkgname
                           '?hostarch XBPS_ARCH
                           '?targetarch XBPS_TARGET_ARCH
-                          '?cross cross
-                          }]})
-    )
+                          '?cross cross}]}))
 
 (defn get-pkg-data
   ([pkgkey]
    (db-guard)
    (crux/entity (crux/db @node) pkgkey))
-  ([pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as build-profile}]
+  ([pkgname build-profile]
    (-> (get-pkg-key pkgname build-profile)
        only
        only
@@ -106,17 +103,14 @@
                           {:find '[?deps]
                            :where '[[?e :pkgname ?name]
                                     [?e :depends ?deps]
-                                    [?e :dxpb/targetarch ?targetarch]
-                                    ]
+                                    [?e :dxpb/targetarch ?targetarch]]
                            :args all-pkg-query-args})
           makedepends (crux/q (crux/db @node)
                               {:find '[?deps]
                                :where '[[?e :pkgname ?name]
                                         [?e :makedepends ?deps]
-                                        [?e :dxpb/targetarch ?targetarch]
-                                        ]
+                                        [?e :dxpb/targetarch ?targetarch]]
                                :args all-pkg-query-args})]
-
       (apply union (map set [(-> depends vec flatten) (-> makedepends vec flatten)])))))
 
 (defn pkg-is-noarch [pkgname]
@@ -149,5 +143,4 @@
         ;; We have a set of vectors of strings. Better be the same across all pkgs!
         only
         ;; We have a vector of strings, each vector is from 1 pkg, hope they all match!
-        only
-        )))
+        only)))
