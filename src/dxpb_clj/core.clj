@@ -243,14 +243,28 @@
         target-packages-needed (apply merge (map need-to-filename target-requirements))
         pkg-names-needed (set (concat (keys host-packages-needed) (keys target-packages-needed)))
         pkgs-needed (concat (map need-to-pkg-availability host-requirements) (map need-to-pkg-availability target-requirements))
-        failure-reasons (concat (filter spec-not-parsable host-packages-needed) (filter spec-not-parsable target-packages-needed))
-        ]
+        failure-reasons (concat (filter spec-not-parsable host-packages-needed) (filter spec-not-parsable target-packages-needed))]
     {:files-needed pkg-names-needed
      :unparsable-specs unfindable
      :unavailable-packages failure-reasons
      :host-requirements host-requirements
      :target-requirements target-requirements
      :pkgs-needed pkgs-needed}))
+
+(defn pkg-deps-satisfied-for-build [& {:keys [pkgname target-arch build-env]}]
+  (if build-env
+    (let [{:keys [target-requirements
+                  host-requirements
+                  unfindable]} (pkgname-to-needs
+                                 :pkgname pkgname
+                                 :build-env build-env)
+          pkgs-in-repo (map :in-repo
+                            (concat (map need-to-pkg-availability host-requirements)
+                                    (map need-to-pkg-availability target-requirements)))]
+      (and (empty? unfindable) (empty? (filter false? pkgs-in-repo))))
+    (let [valid-envs (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) ARCH_PAIRS)]
+      (zipmap valid-envs
+              (map (partial pkg-deps-satisfied-for-build :pkgname pkgname :build-env) valid-envs)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -277,7 +291,7 @@
                                  (when title-annendum (str " - " title-annendum)))]
                     [:meta {:name :viewport :content "width=device-width"}]
                     [:link {:rel :stylesheet :href "https://cdn.jsdelivr.net/gh/kognise/water.css@latest/dist/light.min.css"}]
-                    [:style {:type :text/css} (-> "web/public/main.css" io/resource slurp)]])
+                    [:style {:type "text/css"} (-> "web/public/main.css" io/resource slurp)]])
        [:body
         [:main {} hiccup-page-list]]]
       hiccup-page/html5
@@ -310,7 +324,7 @@
                                                   (let [hostarch (:XBPS_ARCH arch-pair)
                                                         tgtarch (:XBPS_TARGET_ARCH arch-pair)
                                                         iscross (:cross arch-pair)]
-                                                    [:a {:href (url "/v1/pre-build-requirements/" pkgname "/" hostarch "/" tgtarch "/" iscross)}
+                                                    [:a {:href (url "/v1/pre-build-requirements/" pkgname "/" tgtarch "/" hostarch "/" iscross)}
                                                      (str "Host: " hostarch " Target: " tgtarch (when iscross " (cross)"))]))))))
         table-to-return [:div {} [:h3 title-annendum]
                          (into [:table {} pkg-list-table-head]
@@ -350,14 +364,16 @@
           [:tr [:td {} "Target Arch"] [:td {} XBPS_TARGET_ARCH]]
           [:tr [:td {} "Cross-build"] [:td {} cross]]]))
 
-(defn inject-dumb-package-list-table [{:keys [table-headers table-body-from table-body-empty conj-tables-to] :as in}]
+(defn inject-dumb-package-list-table [{:keys [table-headers table-body-from table-body-empty conj-tables-to fn-table-row-to-element] :as in}]
   (update in
           conj-tables-to
           conj
           (if (seq table-body-from)
             (into [:table {} [:thead {} (map #(vector :th {} %) table-headers)]]
                   (for [table-body-row table-body-from]
-                    [:tr {} (map #(vector :td {} %) table-body-row)]))
+                    [(if fn-table-row-to-element
+                       (fn-table-row-to-element table-body-row)
+                       :tr) {} (map #(vector :td {} %) table-body-row)]))
             table-body-empty)))
 
 (defn assemble-build-requirement-page [{::keys [summary-table] :as in}]
@@ -407,10 +423,20 @@
                             ;; To be precise, and whether the packages are available
                             (assoc :table-headers ["Package Required" "Version" "Arch" "Present"])
                             (assoc :table-body-empty nil)
-                            (update-in [::dep-details :pkgs-needed] (fn [what] (map #(list (:pkgname %)
-                                                                                           (:version %)
-                                                                                           (:arch %)
-                                                                                           (:in-repo %))
+                            (assoc :fn-table-row-to-element (fn [[pkgname _ arch in-repo]]
+                                                              (if in-repo
+                                                                :tr.present
+                                                                (if (seq
+                                                                      (filter true?
+                                                                              (vals
+                                                                                (pkg-deps-satisfied-for-build :pkgname pkgname
+                                                                                                              :target-arch arch))))
+                                                                  :tr.buildable
+                                                                  :tr.unbuildable))))
+                            (update-in [::dep-details :pkgs-needed] (fn [what] (map (juxt :pkgname
+                                                                                          :version
+                                                                                          :arch
+                                                                                          :in-repo)
                                                                                     what)))
                             (copy-val [::dep-details :pkgs-needed] :table-body-from)
                             inject-dumb-package-list-table
@@ -431,7 +457,7 @@
 		(comp/GET "/reset-caches" [] (fn [req] (repo-reader :force true) (main-interactive-page [req])))
 		(comp/GET "/v1/pre-build-requirements" [] (packages-page :all))
 		(comp/GET "/v1/pre-build-requirements-bootstrap" [] (packages-page :bootstrap))
-		(comp/GET "/v1/pre-build-requirements/:pkgname/:host-arch/:tgt-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))))
+		(comp/GET "/v1/pre-build-requirements/:pkgname/:tgt-arch/:host-arch/:cross" [pkgname host-arch tgt-arch cross] (build-requirement-page (str pkgname) (str host-arch) (str tgt-arch) (= cross "true")))))
 
 (defn ignore-trailing-slash
   "Modifies the request uri before calling the handler.

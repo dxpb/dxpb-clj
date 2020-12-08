@@ -1,0 +1,11 @@
+tr.present>td:nth-child(4) {
+	background-color: hsla(112, 74%, 50%, 0.33);
+}
+
+tr.buildable>td:nth-child(4) {
+	background-color: hsla(30, 74%, 52%, 0.33);
+}
+
+tr.unbuildable>td:nth-child(4) {
+	background-color: hsla(345, 74%, 52%, 0.33);
+}
