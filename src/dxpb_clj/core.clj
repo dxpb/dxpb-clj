@@ -25,19 +25,19 @@
 
 (def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"         :cross false}
                  {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"    :cross false}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "i686"           :cross false}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l"         :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l-musl"    :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l"         :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l-musl"    :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64"        :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64-musl"   :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc"            :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc-musl"       :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64"          :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64-musl"     :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"        :cross true}
-               ;;{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "i686"           :cross false}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l"         :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l-musl"    :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l"         :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l-musl"    :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64"        :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64-musl"   :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc"            :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc-musl"       :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64"          :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64-musl"     :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"        :cross true}
+               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
                  ])
 
 (defn graph-is-read []
@@ -236,6 +236,12 @@
      :spec-ok specs-ok
      :spec (:spec need)}))
 
+(defn pkg-in-repo [pkgname arch]
+  ((:package-in-repo? (repo-reader))
+   :pkgname pkgname
+   :version (pkg-version pkgname)
+   :arch arch))
+
 (defn pkg-requires-to-build [& {:keys [pkgname build-env]}]
   (let [spec-not-parsable (fn [known-data] (not (true? (val known-data))))
         {:keys [target-requirements host-requirements unfindable]} (pkgname-to-needs :pkgname pkgname :build-env build-env)
@@ -251,7 +257,10 @@
      :target-requirements target-requirements
      :pkgs-needed pkgs-needed}))
 
-(defn pkg-deps-satisfied-for-build [& {:keys [pkgname target-arch build-env]}]
+(defn arch-pairs-for-target [target-arch]
+  (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) ARCH_PAIRS))
+
+(defn pkg-deps-satisfied-for-build [& {:keys [pkgname target-arch build-env as-boolean] :or {as-boolean false}}]
   (if build-env
     (let [{:keys [target-requirements
                   host-requirements
@@ -262,9 +271,34 @@
                             (concat (map need-to-pkg-availability host-requirements)
                                     (map need-to-pkg-availability target-requirements)))]
       (and (empty? unfindable) (empty? (filter false? pkgs-in-repo))))
-    (let [valid-envs (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) ARCH_PAIRS)]
-      (zipmap valid-envs
-              (map (partial pkg-deps-satisfied-for-build :pkgname pkgname :build-env) valid-envs)))))
+    (let [valid-envs (arch-pairs-for-target target-arch)
+          rV (zipmap valid-envs
+                     (map (partial pkg-deps-satisfied-for-build
+                                   :pkgname
+                                   pkgname
+                                   :build-env)
+                          valid-envs))]
+      (if as-boolean
+        (seq (filter true? (vals rV)))
+        rV))))
+
+(defn get-which-packages-to-build [& {:keys [list-of-pkgnames build-env]}]
+  ;;; Need to find a list of package names
+  ;;; Then return the set of packagenames that can be built
+  ;;; Maybe do this in 2 phases, bootstrap first, then the rest?
+  ;;; For each pkgname, if it isn't present, and can be built, then return its name.
+  (let [pkg-can-and-should-be-built (fn [pkgname-in]
+                                             (when (pkg-in-repo pkgname-in (:XBPS_TARGET_ARCH build-env))
+                                               (pkg-deps-satisfied-for-build :pkgname pkgname-in :build-env build-env)))
+        priority-set (filter pkg-can-and-should-be-built (list-of-bootstrap-pkgnames))]
+    (if (seq priority-set)
+      {(:XBPS_TARGET_ARCH build-env) priority-set}
+      (let [all-needs (map (partial pkgname-to-needs :build-env build-env :pkgname) list-of-pkgnames)
+            all-host-requirements (merge-with merge-obtained-pkgnames (map :host-requirements all-needs))
+            all-target-requirements (merge-with merge-obtained-pkgnames (map :target-requirements all-needs))]
+        {(:XBPS_ARCH build-env) (filter pkg-can-and-should-be-built all-host-requirements)
+         (:XBPS_TARGET_ARCH build-env) (filter pkg-can-and-should-be-built all-target-requirements)
+         :_ (apply concat (map :unfindable all-needs))}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -426,11 +460,9 @@
                             (assoc :fn-table-row-to-element (fn [[pkgname _ arch in-repo]]
                                                               (if in-repo
                                                                 :tr.present
-                                                                (if (seq
-                                                                      (filter true?
-                                                                              (vals
-                                                                                (pkg-deps-satisfied-for-build :pkgname pkgname
-                                                                                                              :target-arch arch))))
+                                                                (if (pkg-deps-satisfied-for-build :pkgname pkgname
+                                                                                                  :target-arch arch
+                                                                                                  :as-boolean true)
                                                                   :tr.buildable
                                                                   :tr.unbuildable))))
                             (update-in [::dep-details :pkgs-needed] (fn [what] (map (juxt :pkgname

@@ -31,14 +31,20 @@
 
 (defn add-pkg [pkgname pkginfo]
   (db-guard)
-  (let [make-map-data (fn [[archspec pkginfo]]
+  (let [archspec->str (fn [{:keys [cross XBPS_ARCH XBPS_TARGET_ARCH]}]
+                        (str "target:" XBPS_TARGET_ARCH
+                             ":host:" XBPS_ARCH
+                             ":cross:" (if cross
+                                         true
+                                         false)))
+        make-map-data (fn [[archspec pkginfo]]
                         (let [hostarch (:XBPS_ARCH archspec)
                               targetarch (:XBPS_TARGET_ARCH archspec)
                               is-cross (get archspec :cross false)
-                              key-of-info (keyword (str pkgname ":"
-                                                        hostarch ":"
-                                                        targetarch ":"
-                                                        "cross:" is-cross))]
+                              key-of-info (->> archspec
+                                               archspec->str
+                                               (str pkgname ":")
+                                               keyword)]
                           (merge pkginfo
                                  {:crux.db/id key-of-info}
                                  {:dxpb/hostarch hostarch}
