@@ -287,12 +287,14 @@
   ;;; Then return the set of packagenames that can be built
   ;;; Maybe do this in 2 phases, bootstrap first, then the rest?
   ;;; For each pkgname, if it isn't present, and can be built, then return its name.
-  (let [pkg-can-and-should-be-built (fn [arch pkgname-in]
+  (let [bootstrap-list (list-of-bootstrap-pkgnames)
+        pkg-can-and-should-be-built (fn [arch pkgname-in]
                                              (when (pkg-in-repo pkgname-in arch)
                                                (pkg-deps-satisfied-for-build :pkgname pkgname-in :build-env build-env)))
-        priority-set (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) (list-of-bootstrap-pkgnames))]
-    (if (seq priority-set)
-      {(:XBPS_TARGET_ARCH build-env) priority-set}
+        absent-bootstrap-packages (filter (complement #(pkg-in-repo % (:XBPS_TARGET_ARCH build-env))) bootstrap-list)
+        bootstrap-packages-to-build (filter (partial pkg-deps-satisfied-for-build :build-env build-env :pkgname) absent-bootstrap-packages)]
+    (if (seq absent-bootstrap-packages)
+      {(:XBPS_TARGET_ARCH build-env) bootstrap-packages-to-build}
       (let [all-needs (map (partial pkgname-to-needs :build-env build-env :pkgname) list-of-pkgnames)
             all-host-requirements (merge-with merge-obtained-pkgnames (map :host-requirements all-needs))
             all-target-requirements (merge-with merge-obtained-pkgnames (map :target-requirements all-needs))]
