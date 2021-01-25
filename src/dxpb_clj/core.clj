@@ -21,7 +21,6 @@
     (reset! REPO_READER (get-repo-reader :file+repodata))
     @REPO_READER))
 
-(def XBPS_SRC_WORKERS (atom 0))
 
 (def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"         :cross false}
                  {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"    :cross false}
@@ -39,9 +38,6 @@
                #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"        :cross true}
                #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
                  ])
-
-(defn graph-is-read []
-  (zero? @XBPS_SRC_WORKERS))
 
 (defn sh-wrap [& {:keys [env dir cmd]}]
   (shell/with-sh-env env
