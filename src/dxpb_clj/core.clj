@@ -302,6 +302,15 @@
          (:XBPS_TARGET_ARCH build-env) (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) all-target-requirements)
          :_ (apply concat (map :unfindable all-needs))}))))
 
+(defn all-pkgs-to-build [list-of-pkgnames]
+  (loop [envs-to-process ARCH_PAIRS
+         rV {}]
+    (if (seq envs-to-process)
+      rV
+      (let [proc-this (first envs-to-process)]
+        (recur (rest envs-to-process)
+               (assoc rV proc-this (get-which-packages-to-build :list-of-pkgnames list-of-pkgnames :build-env proc-this)))))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
