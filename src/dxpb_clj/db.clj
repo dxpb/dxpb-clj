@@ -47,6 +47,7 @@
                                                keyword)]
                           (merge pkginfo
                                  {:crux.db/id key-of-info}
+                                 {:dxpb/record-type :read-package}
                                  {:dxpb/hostarch hostarch}
                                  {:dxpb/targetarch targetarch}
                                  {:dxpb/crossbuild is-cross}
@@ -61,20 +62,23 @@
   (seq
     (crux/q (crux/db @node)
             {:find '[?e]
-             :where '[[?e :pkgname ?name]]
+             :where '[[?e :pkgname ?name]
+                      [?e :dxpb/record-type :read-package]]
              :args [{'?name pkgname}]})))
 
 (defn list-of-all-pkgnames []
   (db-guard)
   (apply concat (crux/q (crux/db @node)
                         {:find '[?name]
-                         :where '[[?e :pkgname ?name]]})))
+                         :where '[[?e :pkgname ?name]
+                                  [?e :dxpb/record-type :read-package]]})))
 
 (defn list-of-bootstrap-pkgnames []
   (db-guard)
   (apply concat (crux/q (crux/db @node)
                         {:find '[?name]
                          :where '[[?e :pkgname ?name]
+                                  [?e :dxpb/record-type :read-package]
                                   [?e :bootstrap ?ignored]]})))
 
 (defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false}}]
@@ -82,6 +86,7 @@
   (crux/q (crux/db @node)
                  {:find '[?e]
                   :where '[[?e :pkgname ?name]
+                           [?e :dxpb/record-type :read-package]
                            [?e :dxpb/hostarch ?hostarch]
                            [?e :dxpb/targetarch ?targetarch]
                            [?e :dxpb/crossbuild ?cross]]
@@ -108,12 +113,14 @@
           depends (crux/q (crux/db @node)
                           {:find '[?deps]
                            :where '[[?e :pkgname ?name]
+                                    [?e :dxpb/record-type :read-package]
                                     [?e :depends ?deps]
                                     [?e :dxpb/targetarch ?targetarch]]
                            :args all-pkg-query-args})
           makedepends (crux/q (crux/db @node)
                               {:find '[?deps]
                                :where '[[?e :pkgname ?name]
+                                        [?e :dxpb/record-type :read-package]
                                         [?e :makedepends ?deps]
                                         [?e :dxpb/targetarch ?targetarch]]
                                :args all-pkg-query-args})]
@@ -125,8 +132,8 @@
     (-> (crux/q (crux/db @node)
                 {:find '[?archs]
                  :where '[[?e :pkgname ?name]
-                          [?e :archs ?archs]
-                          ]
+                          [?e :dxpb/record-type :read-package]
+                          [?e :archs ?archs]]
                  :args [{'?name pkgname}]})
         ;; We have a set of vectors of lists
         only
@@ -143,8 +150,8 @@
     (-> (crux/q (crux/db @node)
                 {:find '[?version]
                  :where '[[?e :pkgname ?name]
-                          [?e :version ?version]
-                          ]
+                          [?e :dxpb/record-type :read-package]
+                          [?e :version ?version]]
                  :args [{'?name pkgname}]})
         ;; We have a set of vectors of strings. Better be the same across all pkgs!
         only
