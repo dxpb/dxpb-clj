@@ -1,0 +1,164 @@
+[{:pkgname "gcc"
+  :version "10.2.1pre1_2"
+  :hostmakedepends #{"tar"
+                     "texinfo"
+                     "perl"
+                     "flex"}
+  :makedepends #{"zlib-devel"}
+  :depends #{"binutils"
+             "libgcc-devel-10.2.1pre1_2"
+             "libstdc++-devel-10.2.1pre1_2"
+             "libssp-devel-10.2.1pre1_2"
+             "glibc-devel"}
+  :dxpb/sub-packages #{"libgcc"
+                       "libgomp"
+                       "libgomp-devel"
+                       "libatomic"
+                       "libatomic-devel"
+                       "libssp"
+                       "libssp-devel"
+                       "gcc-fortran"
+                       "libgfortran-devel"
+                       "libgfortran"
+                       "gcc-objc"
+                       "gcc-objc++"
+                       "libobjc-devel"
+                       "libobjc"
+                       "gcc-go"
+                       "gcc-go-tools"
+                       "libgo-devel"
+                       "libgo"
+                       "libstdc++-devel"
+                       "libstdc++"
+                       "libgcc-devel"
+                       "gcc-ada"
+                       "libada-devel"
+                       "libada"
+                       "libsanitizer"
+                       "libsanitizer-devel"
+                       "libquadmath"
+                       "libquadmath-devel"
+                       "libvtv"
+                       "libvtv-devel"
+                       "libitm"
+                       "libitm-devel"}}
+ {:pkgname "libgcc"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libgomp"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libgomp-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libgomp>=10.2"}}
+ {:pkgname "libatomic"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libatomic-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libatomic>=10.2"}}
+ {:pkgname "libssp"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libssp-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libssp>=10.2"}}
+ {:pkgname "gcc-fortran"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc>=10.2"
+             "libgfortran-devel>=10.2"}}
+ {:pkgname "libgfortran-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libgfortran>=10.2"}}
+ {:pkgname "libgfortran"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "gcc-objc"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc>=10.2"
+             "libobjc>=10.2"}}
+ {:pkgname "gcc-objc++"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc-objc>=10.2"}}
+ {:pkgname "libobjc-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libobjc>=10.2"}}
+ {:pkgname "libobjc"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "gcc-go"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc>=10.2"
+             "libgo-devel>=10.2"}}
+ {:pkgname "gcc-go-tools"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc-go>=10.2"}}
+ {:pkgname "libgo-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libgo>=10.2"}}
+ {:pkgname "libgo"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libstdc++-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libstdc++>=10.2"}}
+ {:pkgname "libstdc++"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libgcc-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libgcc-10.2.1pre1_2"}}
+ {:pkgname "gcc-ada"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"gcc>=10.2"
+             "libada-devel>=10.2"}}
+ {:pkgname "libada-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libada>=10.2"}}
+ {:pkgname "libada"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libsanitizer"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libsanitizer-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libsanitizer>=10.2"}}
+ {:pkgname "libquadmath"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libquadmath-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libquadmath>=10.2"}}
+ {:pkgname "libvtv"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libvtv-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libvtv>=10.2"}}
+ {:pkgname "libitm"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"}
+ {:pkgname "libitm-devel"
+  :version "10.2.1pre1_2"
+  :dxpb/main-package "gcc"
+  :depends #{"libitm>=10.2"}}
+]

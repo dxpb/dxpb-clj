@@ -3,7 +3,7 @@
   (:import java.io.File)
   (:require [clojure.core.async :as async :refer [>!! <!! chan thread pipeline-async close!]]
             [clojure.java.shell :as shell :refer [sh]]
-            [clojure.string :refer [split trim join capitalize]]
+            [clojure.string :refer [split trim capitalize] :as string]
             [clojure.set :refer [union difference rename-keys]]
             [compojure.core :as comp]
             [ring.adapter.jetty :refer [run-jetty]]
@@ -59,7 +59,7 @@
                                (->> (for [pkg-variable (split (:out show-pkg-info) #"\n\n")]
                                       (split pkg-variable #"\s+"))
                                     (filter #(> (count %) 1)) ;; is set
-                                    (map #(hash-map (keyword (join (drop-last (first %)))) (rest %)))))
+                                    (map #(hash-map (keyword (string/join (drop-last (first %)))) (rest %)))))
                         )
         version-str (str (first (:version new-info)) "_" (first (:revision new-info)))]
     (-> new-info
@@ -100,6 +100,112 @@
                                      ))})]
         (>!! result output))
       (close! result))))
+
+#_ (= (parse-dbulk-dump "pkgname: spim\nversion: 8.0\nrevision: 2\nhostmakedepends:\n flex\n gcc")
+      {:pkgname "spim" :version "8.0" :revision "2" :hostmakedepends '("flex" "gcc")})
+
+#_ (= (parse-dbulk-dump "subpackages:\n pkga\n  depends:\n   depa\n   depb\n pkgb\n pkgc\n pkgd\n  depends:\n   depc")
+      {:subpackages '("pkga" " depends:" "  depa" "  depb" "pkgb" "pkgc" "pkgd" " depends:" "  depc")})
+
+(defn parse-dbulk-dump
+  "Take in the string output of ./xbps-src dbulk-dump
+  If the text is well formed, return a map with the raw parse
+    This map may have a :subpackages key to parse out later.
+  If the text is not well formed, return nil."
+  [dump]
+  (let [starts-with-space #(string/starts-with? % " ")
+        drop-first-space #(subs % 1)]
+    (loop [lines (cond
+                   (string? dump) (split dump #"\n")
+                   (seq dump) dump)
+           rV {}]
+      (if (empty? lines)
+        rV
+        (let [line (split (first lines) #" ")
+              this-line-as-keyword (-> line
+                                       first
+                                       drop-last
+                                       string/join
+                                       keyword)]
+          (cond ;; nil if malformed, recur if reasonable
+            (and (= (count line) 1) ;; no value, now we need to get the rest of the list
+                 (string/ends-with? (first line) ":")) (let [[these-items next-items] (split-with starts-with-space (rest lines))]
+                                                         (recur next-items
+                                                                (assoc rV this-line-as-keyword (map drop-first-space these-items))))
+            (and (> (count line) 1) ;; a simple value set
+                 (string/ends-with? (first line) ":")
+                 (seq (first line))) (recur (rest lines)
+                                            (assoc rV this-line-as-keyword (if (= (count (rest line)) 1)
+                                                                             (last line)
+                                                                             (rest line))))))))))
+
+(defn merge-raw-dbulk-dump-version-string [in]
+  (-> in
+      (assoc :version (str (:version in) "_" (:revision in)))
+      (dissoc :revision)))
+
+#_ (= (-> (parse-dbulk-dump "subpackages:\n pkga\n  depends:\n   depa\n   depb\n pkgb\n pkgc\n pkgd\n  depends:\n   depc")
+          :subpackages
+          partition-subpackages)
+      '(("pkga" " depends:" "  depa" "  depb") ("pkgb") ("pkgc") ("pkgd" " depends:" "  depc")))
+
+(defn partition-subpackages [subpackages-from-dbulk-dump]
+  (loop [left-to-parse subpackages-from-dbulk-dump
+         rV []
+         pkg-num -1]
+    (if (empty? left-to-parse)
+      rV
+      (if (string/starts-with? (first left-to-parse) " ")
+        (recur (rest left-to-parse)
+               (update rV pkg-num conj (first left-to-parse))
+               pkg-num)
+        (recur (rest left-to-parse)
+               (conj rV (vector (first left-to-parse)))
+               (inc pkg-num))))))
+
+(defn subpackage-from-dbulk-dump->package [main-pkgname version in]
+  (merge (parse-dbulk-dump (map #(subs % 1) (rest in)))
+         {:pkgname (first in)
+          :version version
+          :dxpb/main-package main-pkgname}))
+
+#_ (= (defn test1 [] (->> (parse-dbulk-dump "pkgname: spim\nversion: 8.0\nrevision: 2\nhostmakedepends:\n flex\n gcc\nsubpackages:\n pkga\n  depends:\n   depa\n   depb\n pkgb\n pkgc\n pkgd\n  depends:\n   depc")
+          merge-raw-dbulk-dump-version-string
+          derive-subpackages-from-dbulk-dump
+          (map package-val-lists->sets)))
+      '({:pkgname "spim", :version "8.0_2", :hostmakedepends ("flex" "gcc"), :dxpb/sub-packages #{"pkgb" "pkga" "pkgd" "pkgc"}}
+        {:depends ("depa" "depb"), :pkgname "pkga", :version "8.0_2", :dxpb/main-package "spim"}
+        {:pkgname "pkgb", :version "8.0_2", :dxpb/main-package "spim"}
+        {:pkgname "pkgc", :version "8.0_2", :dxpb/main-package "spim"}
+        {:depends ("depc"), :pkgname "pkgd", :version "8.0_2", :dxpb/main-package "spim"}))
+
+(defn derive-subpackages-from-dbulk-dump [{:keys [pkgname subpackages version] :as package}]
+  (let [packages-of-subpackages (map (partial subpackage-from-dbulk-dump->package pkgname version)
+                                     (partition-subpackages subpackages))]
+    (conj packages-of-subpackages
+          (-> package
+              (dissoc :subpackages)
+              (assoc :dxpb/sub-packages (set (map :pkgname packages-of-subpackages)))))))
+
+(defn package-val-lists->sets [package-map]
+  (into {} (map #(if (string? (val %)) ;; we only have 1 kind of steady val: string
+                   [(key %) (val %)]
+                   [(key %) (set (val %))]) ;; hard to test list? because lazy seq
+                package-map)))
+
+(defn dbulk-dump-str->list-of-packages [in]
+  (->> in
+       parse-dbulk-dump
+       merge-raw-dbulk-dump-version-string
+       derive-subpackages-from-dbulk-dump
+       (map package-val-lists->sets)))
+
+(defn xbps-src-dbulk-dump [path build-envs]
+  (fn [pkgname result]
+    (thread
+      (let []
+        ))))
+;;;;; XXXXX
 
 (defn chan-write-all [c in]
   (when in
@@ -324,7 +430,7 @@
     thing))
 
 (defn url [& args]
-  (let [append (join (map #(if (keyword? %) (name %) %) args))]
+  (let [append (string/join (map #(if (keyword? %) (name %) %) args))]
     (if (and (= \/ (first append)) (= \/ (last @BASE_URL)))
       (str @BASE_URL (subs append 1))
       (if (and (not= \/ (first append)) (not= \/ (last @BASE_URL)))
