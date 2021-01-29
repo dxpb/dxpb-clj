@@ -13,7 +13,8 @@
                  [ring/ring-defaults "0.3.2"]
                  [ring/ring-jetty-adapter "1.8.1"]
                  [hiccup "1.0.5"]
-                 ]
+                 [org.clojure/data.json "1.0.0"]
+                 [http-kit "2.5.1"]]
   :main ^:skip-aot dxpb-clj.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}

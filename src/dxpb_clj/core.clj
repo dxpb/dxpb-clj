@@ -12,15 +12,22 @@
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
             [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
-            [dxpb-clj.repo-reader :refer [get-repo-reader]]))
+            [dxpb-clj.repo-reader :refer [get-repo-reader]]
+            [dxpb-clj.execute-build :refer [get-executor]]))
 
 (def REPO_READER (atom nil))
+
+(def BUILD_EXECUTOR (atom nil))
 
 (defn repo-reader [& {:keys [force] :or {force false}}]
   (if (or (nil? @REPO_READER) force)
     (reset! REPO_READER (get-repo-reader :file+repodata))
     @REPO_READER))
 
+(defn build-executor [& {:keys [force] :or {force false}}]
+  (if (or (nil? @BUILD_EXECUTOR) force)
+    (reset! BUILD_EXECUTOR (get-executor :parameterized-nomad))
+    @BUILD_EXECUTOR))
 
 (def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"         :cross false}
                  {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"    :cross false}
@@ -292,10 +299,8 @@
     (if (seq absent-bootstrap-packages)
       {(:XBPS_TARGET_ARCH build-env) bootstrap-packages-to-build}
       (let [all-needs (map (partial pkgname-to-needs :build-env build-env :pkgname) list-of-pkgnames)
-            all-host-requirements (merge-with merge-obtained-pkgnames (map :host-requirements all-needs))
             all-target-requirements (merge-with merge-obtained-pkgnames (map :target-requirements all-needs))]
-        {(:XBPS_ARCH build-env) (filter (partial pkg-can-and-should-be-built (:XBPS_ARCH build-env)) all-host-requirements)
-         (:XBPS_TARGET_ARCH build-env) (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) all-target-requirements)
+        {(:XBPS_TARGET_ARCH build-env) (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) all-target-requirements)
          :_ (apply concat (map :unfindable all-needs))}))))
 
 (defn all-pkgs-to-build [list-of-pkgnames]
