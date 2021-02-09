@@ -11,9 +11,11 @@
             [ring.util.response :as ring-response]
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
-            [dxpb-clj.db :refer [add-pkg does-pkgname-exist get-pkg-data get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
+            [config.core :refer [env]]
+            [dxpb-clj.db :refer [take-instruction does-pkgname-exist get-pkg-data get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
             [dxpb-clj.repo-reader :refer [get-repo-reader]]
-            [dxpb-clj.execute-build :refer [get-executor]]))
+            [dxpb-clj.execute-build :refer [get-executor]]
+            [org.tobereplaced.nio.file :refer [symbolic-link? file-name]]))
 
 (def REPO_READER (atom nil))
 
@@ -46,59 +48,31 @@
                #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
                  ])
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;> READ IN PACKAGES HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn sh-wrap [& {:keys [env dir cmd]}]
   (shell/with-sh-env env
     (shell/with-sh-dir
       dir
       (apply sh cmd))))
 
-(defn parse-show-pkg-info [{:keys [show-pkg-info show-avail]}]
-  (let [new-info (merge {::err (not= 0 (:exit show-pkg-info))
-                         ::can-be-built (= 0 (:exit show-avail))}
-                        (apply merge
-                               (->> (for [pkg-variable (split (:out show-pkg-info) #"\n\n")]
-                                      (split pkg-variable #"\s+"))
-                                    (filter #(> (count %) 1)) ;; is set
-                                    (map #(hash-map (keyword (string/join (drop-last (first %)))) (rest %)))))
-                        )
-        version-str (str (first (:version new-info)) "_" (first (:revision new-info)))]
-    (-> new-info
-        (assoc :version version-str)
-        (dissoc :revision))))
+(defn xbps-src-dbulk-dump
+  "Take in an archspec and a pkgname, return the xbps-src result for it.
+  Return val is a map {:out valid-only-unless :exit value ::pkgname that-was-commanded}"
+  [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :as arch-spec} pkgname]
+  (let [command (if cross
+                  ["./xbps-src" "-a" XBPS_TARGET_ARCH "dbulk-dump" pkgname]
+                  ["./xbps-src" "dbulk-dump" pkgname])]
+    (-> (sh-wrap :env arch-spec :dir (:owned-packages-path env) :cmd command)
+      (assoc ::pkgname pkgname)
+      (assoc ::arch-spec arch-spec))))
 
-(defn parse-pkg-info [info]
-  (let [new-info (apply merge (for [arch-info (:raw-info info)]
-                                {(:arch-set arch-info)
-                                 (merge
-                                   (parse-show-pkg-info arch-info)
-                                   {:pkgname (:pkgname info)})})) ;; this is wrong for our uses for subpkgs, so we overwrite pkgname
-        version (let [versions (set (apply concat (for [[_ info] new-info] (for [[_ info] info] (:version info)))))]
-                  (when (= 1 (count versions))
-                    (first versions)))
-        ]
-    {:pkgname (:pkgname info)
-     :version version
-     :info new-info }))
-
-(defn xbps-src-read [path archs]
+(defn wrap-for-pipe [fn1]
   (fn [pkgname result]
     (thread
-      (let [output (parse-pkg-info
-                     {:pkgname pkgname
-                      :raw-info (for [arch archs]
-                                  (let [tgt-arch (:XBPS_TARGET_ARCH arch)
-                                        straight-build (not (:cross arch))]
-                                    (merge
-                                      {:arch-set arch}
-                                      (if straight-build
-                                        {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-q" "-i" "show-pkg-var-dump" pkgname])
-                                         :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "show-avail" pkgname])
-                                         }
-                                        {:show-pkg-info (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "-q" "-i" "show-pkg-var-dump" pkgname])
-                                         :show-avail (sh-wrap :env arch :dir path :cmd ["./xbps-src" "-a" tgt-arch "show-avail" pkgname])
-                                         }))
-                                     ))})]
-        (>!! result output))
+      (>!! result (fn1 pkgname))
       (close! result))))
 
 #_ (= (parse-dbulk-dump "pkgname: spim\nversion: 8.0\nrevision: 2\nhostmakedepends:\n flex\n gcc")
@@ -200,31 +174,74 @@
        derive-subpackages-from-dbulk-dump
        (map package-val-lists->sets)))
 
-(defn xbps-src-dbulk-dump [path build-envs]
-  (fn [pkgname result]
-    (thread
-      (let []
-        ))))
-;;;;; XXXXX
+(defmulti dbulk-dump-cmd->info
+  (fn [{:keys [exit]}]
+    (if (zero? exit)
+      ::data-ok
+      ::delete-pkg)))
+
+(defmethod dbulk-dump-cmd->info ::data-ok [{:keys [out]
+                                            {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :as arch-spec} ::arch-spec}]
+  (let [pkgname->cruxid #(str (:pkgname %)
+                              ":target:" (:dxpb/targetarch %)
+                              ":host:" (:dxpb/hostarch %)
+                              ":cross:" (:dxpb/crossbuild %))]
+    (->> out
+         dbulk-dump-str->list-of-packages
+         (map #(assoc % :dxpb/hostarch XBPS_ARCH))
+         (map #(assoc % :dxpb/targetarch XBPS_TARGET_ARCH))
+         (map #(assoc % :dxpb/crossbuild (not (not cross))))
+         (map #(assoc % :crux.db/id (pkgname->cruxid %)))
+         (map #(assoc % :dxpb/type :package)))))
+
+(defmethod dbulk-dump-cmd->info ::delete-pkg [{::keys [pkgname arch-spec]}]
+  {:pkgname pkgname
+   :arch-spec arch-spec
+   :delete true})
+
+(defmulti dbulk-dump-info->database-command
+  (fn [data]
+    (if (:delete data)
+      ::delete-pkg
+      ::data-ok)))
+
+(defmethod dbulk-dump-info->database-command ::data-ok [info]
+  (conj (mapv (partial vector :crux.tx/put) info)
+        [:crux.tx/fn :ensure-pruned-subpkgs]))
+
+(defmethod dbulk-dump-info->database-command ::delete-pkg [{:keys [pkgname arch-spec]}]
+  [[:crux.tx/fn :delete-package pkgname arch-spec]])
 
 (defn chan-write-all [c in]
   (when in
     (async/put! c (first in) (fn [_] (chan-write-all c (next in))))))
 
-(defn bootstrap-pkg-list [path]
-  (let [file-list (map #(.getName %) (.listFiles (File. (str path "/srcpkgs"))))
-        total-num-files (count file-list)
-        pkgnames (chan 1000)
-        pkginfo (chan 1000)
-        ]
-    (pipeline-async 15 pkginfo (xbps-src-read path ARCH_PAIRS) pkgnames)
-    (chan-write-all pkgnames file-list)
-    (loop [done 0]
-      (println done "/" total-num-files)
-      (let [new-info (<!! pkginfo)]
-        (add-pkg (:pkgname new-info) (:info new-info)))
-      (when (not= (inc done) total-num-files)
-        (recur (inc done))))))
+(defn bootstrap-pkg-list
+  ([arch-spec]
+   (let [file-list (->> (str (:owned-packages-path env) "/srcpkgs")
+                        File.
+                        .listFiles
+                        (filter (complement symbolic-link?)))
+         total-num-files (count file-list)
+         pkgnames (chan 1000 (map (comp str file-name)))
+         pkginfo (chan 1000 (comp (map dbulk-dump-info->database-command)
+                                  (map dbulk-dump-cmd->info)))]
+     (pipeline-async (get env :num-xbps-src-readers 15)
+                     pkginfo
+                     (wrap-for-pipe (partial xbps-src-dbulk-dump arch-spec))
+                     pkgnames)
+     (chan-write-all pkgnames file-list)
+     (loop [done 0]
+       (println done "/" total-num-files)
+       (take-instruction (<!! pkginfo))
+       (when (not= (inc done) total-num-files)
+         (recur (inc done)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;> END OF READING IN PACKAGES <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;> BEGIN THE PART WITH THE GRAPH <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; XXX: Write tests, testing pkgnames found in templates as written
 ;; Valid ones get a pkgname out. Invalid ones get a nil.

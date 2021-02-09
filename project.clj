@@ -14,7 +14,8 @@
                  [ring/ring-jetty-adapter "1.8.1"]
                  [hiccup "1.0.5"]
                  [org.clojure/data.json "1.0.0"]
-                 [http-kit "2.5.1"]]
+                 [http-kit "2.5.1"]
+                 [org.tobereplaced/nio.file "0.4.0"]]
   :main ^:skip-aot dxpb-clj.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}

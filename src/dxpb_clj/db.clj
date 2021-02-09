@@ -5,6 +5,12 @@
             [clojure.set :refer [union]]
             ))
 
+(def crux-fn-delete-package '(fn [ctx pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]}]
+                               []))
+
+(def crux-fn-ensure-pruned-subpkgs '(fn [ctx]
+                                      []))
+
 (def node (atom nil))
 
 (defn- only [in]
@@ -25,37 +31,24 @@
   (or (:DXPB_SERVER_DIR env)
       "./datadir"))
 
+(defn ensure-db-functions [db]
+  (when (not= (crux/entity (crux/db db) :delete-package)
+              crux-fn-delete-package)
+    (crux/submit-tx db {:crux.db/id :delete-package
+                        :crux.db/fn crux-fn-delete-package}))
+  (when (not= (crux/entity (crux/db db) :ensure-pruned-subpkgs)
+              crux-fn-ensure-pruned-subpkgs)
+    (crux/submit-tx db {:crux.db/id :ensure-pruned-subpkgs
+                        :crux.db/fn crux-fn-ensure-pruned-subpkgs})))
+
 (defn db-guard []
   (when (nil? @node)
-    (reset! node (start-standalone-node (get-storage-dir!)))))
+    (reset! node (start-standalone-node (get-storage-dir!)))
+    (ensure-db-functions @node)))
 
-(defn add-pkg [pkgname pkginfo]
+(defn take-instruction [instructions]
   (db-guard)
-  (let [archspec->str (fn [{:keys [cross XBPS_ARCH XBPS_TARGET_ARCH]}]
-                        (str "target:" XBPS_TARGET_ARCH
-                             ":host:" XBPS_ARCH
-                             ":cross:" (if cross
-                                         true
-                                         false)))
-        make-map-data (fn [[archspec pkginfo]]
-                        (let [hostarch (:XBPS_ARCH archspec)
-                              targetarch (:XBPS_TARGET_ARCH archspec)
-                              is-cross (get archspec :cross false)
-                              key-of-info (->> archspec
-                                               archspec->str
-                                               (str pkgname ":")
-                                               keyword)]
-                          (merge pkginfo
-                                 {:crux.db/id key-of-info}
-                                 {:dxpb/record-type :read-package}
-                                 {:dxpb/hostarch hostarch}
-                                 {:dxpb/targetarch targetarch}
-                                 {:dxpb/crossbuild is-cross}
-                                 {:pkgname pkgname}
-                                 )))
-        to-submit (map #(vector :crux.tx/put (make-map-data %))
-                       pkginfo)]
-    (crux/submit-tx @node to-submit)))
+  (crux/submit-tx @node instructions))
 
 (defn does-pkgname-exist [pkgname]
   (db-guard)
@@ -63,7 +56,7 @@
     (crux/q (crux/db @node)
             {:find '[?e]
              :where '[[?e :pkgname ?name]
-                      [?e :dxpb/record-type :read-package]]
+                      [?e :dxpb/type :package]]
              :args [{'?name pkgname}]})))
 
 (defn list-of-all-pkgnames []
@@ -71,14 +64,14 @@
   (apply concat (crux/q (crux/db @node)
                         {:find '[?name]
                          :where '[[?e :pkgname ?name]
-                                  [?e :dxpb/record-type :read-package]]})))
+                                  [?e :dxpb/type :package]]})))
 
 (defn list-of-bootstrap-pkgnames []
   (db-guard)
   (apply concat (crux/q (crux/db @node)
                         {:find '[?name]
                          :where '[[?e :pkgname ?name]
-                                  [?e :dxpb/record-type :read-package]
+                                  [?e :dxpb/type :package]
                                   [?e :bootstrap ?ignored]]})))
 
 (defn get-pkg-key [pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false}}]
@@ -86,7 +79,7 @@
   (crux/q (crux/db @node)
                  {:find '[?e]
                   :where '[[?e :pkgname ?name]
-                           [?e :dxpb/record-type :read-package]
+                           [?e :dxpb/type :package]
                            [?e :dxpb/hostarch ?hostarch]
                            [?e :dxpb/targetarch ?targetarch]
                            [?e :dxpb/crossbuild ?cross]]
@@ -113,14 +106,14 @@
           depends (crux/q (crux/db @node)
                           {:find '[?deps]
                            :where '[[?e :pkgname ?name]
-                                    [?e :dxpb/record-type :read-package]
+                                    [?e :dxpb/type :package]
                                     [?e :depends ?deps]
                                     [?e :dxpb/targetarch ?targetarch]]
                            :args all-pkg-query-args})
           makedepends (crux/q (crux/db @node)
                               {:find '[?deps]
                                :where '[[?e :pkgname ?name]
-                                        [?e :dxpb/record-type :read-package]
+                                        [?e :dxpb/type :package]
                                         [?e :makedepends ?deps]
                                         [?e :dxpb/targetarch ?targetarch]]
                                :args all-pkg-query-args})]
@@ -132,7 +125,7 @@
     (-> (crux/q (crux/db @node)
                 {:find '[?archs]
                  :where '[[?e :pkgname ?name]
-                          [?e :dxpb/record-type :read-package]
+                          [?e :dxpb/type :package]
                           [?e :archs ?archs]]
                  :args [{'?name pkgname}]})
         ;; We have a set of vectors of lists
@@ -150,7 +143,7 @@
     (-> (crux/q (crux/db @node)
                 {:find '[?version]
                  :where '[[?e :pkgname ?name]
-                          [?e :dxpb/record-type :read-package]
+                          [?e :dxpb/type :package]
                           [?e :version ?version]]
                  :args [{'?name pkgname}]})
         ;; We have a set of vectors of strings. Better be the same across all pkgs!
