@@ -5,11 +5,28 @@
             [clojure.set :refer [union]]
             ))
 
-(def crux-fn-delete-package '(fn [ctx pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]}]
-                               []))
+(def crux-fn-delete-package
+  '(fn [ctx pkgname {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]}]
+     []))
 
-(def crux-fn-ensure-pruned-subpkgs '(fn [ctx]
-                                      []))
+(def crux-fn-ensure-pruned-subpkgs
+  '(fn [ctx]
+     []))
+
+(def crux-fn-delete-arch-spec
+  '(fn [ctx {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :as arch-spec}]
+     (let [arch-spec-key (str ":arch-spec:target:" XBPS_TARGET_ARCH
+                              ":host:" XBPS_ARCH ":cross:" cross)
+           pkgs-to-remove (crux.api/q (crux.api/db ctx)
+                                      '{:find [e]
+                                        :in [[host target cross]]
+                                        :where [[e :dxpb/type :package]
+                                                [e :dxpb/hostarch host]
+                                                [e :dxpb/targetarch target]
+                                                [e :dxpb/crossbuild cross]]}
+                                    [XBPS_ARCH XBPS_TARGET_ARCH cross])]
+       (apply conj [[:crux.tx/delete arch-spec-key]]
+              (map (partial vector :crux.tx/delete) pkgs-to-remove)))))
 
 (def node (atom nil))
 
@@ -34,12 +51,16 @@
 (defn ensure-db-functions [db]
   (when (not= (crux/entity (crux/db db) :delete-package)
               crux-fn-delete-package)
-    (crux/submit-tx db {:crux.db/id :delete-package
-                        :crux.db/fn crux-fn-delete-package}))
+    (crux/submit-tx db [[:crux.tx/put {:crux.db/id :delete-package
+                                       :crux.db/fn crux-fn-delete-package}]]))
   (when (not= (crux/entity (crux/db db) :ensure-pruned-subpkgs)
               crux-fn-ensure-pruned-subpkgs)
-    (crux/submit-tx db {:crux.db/id :ensure-pruned-subpkgs
-                        :crux.db/fn crux-fn-ensure-pruned-subpkgs})))
+    (crux/submit-tx db [[:crux.tx/put {:crux.db/id :ensure-pruned-subpkgs
+                                       :crux.db/fn crux-fn-ensure-pruned-subpkgs}]]))
+  (when (not= (crux/entity (crux/db db) :delete-arch-spec)
+              crux-fn-delete-arch-spec)
+    (crux/submit-tx db [[:crux.tx/put {:crux.db/id :delete-arch-spec
+                                       :crux.db/fn crux-fn-delete-arch-spec}]])))
 
 (defn db-guard []
   (when (nil? @node)
@@ -49,6 +70,45 @@
 (defn take-instruction [instructions]
   (db-guard)
   (crux/submit-tx @node instructions))
+
+(defn arch-spec->db-key [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false}}]
+  (str ":arch-spec"
+       ":target:" XBPS_TARGET_ARCH
+       ":host:" XBPS_ARCH
+       ":cross:" cross))
+
+(defn arch-spec-present? [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as arch-spec}]
+  (db-guard)
+  (->> arch-spec
+       arch-spec->db-key
+       (crux/entity (crux/db @node))
+       some?))
+
+(defn insert-arch-spec [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as arch-spec}]
+  (db-guard)
+  (let [spec-key (arch-spec->db-key arch-spec)
+        spec (-> arch-spec
+                 (assoc :crux.db/id spec-key)
+                 (assoc :dxpb/type :arch-spec))]
+    (or (= spec (crux/entity (crux/db @node) spec-key))
+        (->> spec
+             (vector :crux.tx/put)
+             vector
+             (crux/submit-tx @node)))))
+
+(defn arch-specs []
+  (db-guard)
+  (->> (crux/q (crux/db @node)
+               {:find '[XBPS_ARCH XBPS_TARGET_ARCH cross]
+                :where '[[e :dxpb/type :arch-spec]
+                         [e :XBPS_ARCH XBPS_ARCH]
+                         [e :XBPS_TARGET_ARCH XBPS_TARGET_ARCH]
+                         [e :cross cross]]})
+       (map (partial zipmap [:XBPS_ARCH :XBPS_TARGET_ARCH :cross]))))
+
+(defn remove-arch-spec [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :or {cross false} :as arch-spec}]
+  (db-guard)
+  (crux/submit-tx @node [[:crux.tx/fn :delete-arch-spec arch-spec]]))
 
 (defn does-pkgname-exist [pkgname]
   (db-guard)

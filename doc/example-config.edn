@@ -1,0 +1,8 @@
+{
+ :arch-spec-most-popular {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64"  :cross false}
+ :arch-spec-number-2 {:XBPS_ARCH "x86_64-musl" :XBPS_TARGET_ARCH "x86_64-musl" :cross false}
+ :arch-spec-pi-cross {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "aarch64" :cross true}
+ :arch-spec-pi-cross-musl {:XBPS_ARCH "x86_64-musl" :XBPS_TARGET_ARCH "aarch64-musl" :cross true}
+ :arch-spec-pi-native {:XBPS_ARCH "aarch64" :XBPS_TARGET_ARCH "aarch64" :cross false}
+ :arch-spec-pi-native-musl {:XBPS_ARCH "aarch64-musl" :XBPS_TARGET_ARCH "aarch64-musl" :cross false}
+ }

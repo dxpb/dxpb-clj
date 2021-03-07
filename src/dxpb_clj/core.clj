@@ -4,7 +4,7 @@
   (:require [clojure.core.async :as async :refer [>!! <!! chan thread pipeline-async close!]]
             [clojure.java.shell :as shell :refer [sh]]
             [clojure.string :refer [split trim capitalize] :as string]
-            [clojure.set :refer [union difference rename-keys]]
+            [clojure.set :refer [union difference intersection rename-keys]]
             [compojure.core :as comp]
             [ring.adapter.jetty :refer [run-jetty]]
             [ring.middleware.defaults :as rd]
@@ -12,7 +12,18 @@
             [hiccup.page :as hiccup-page]
             [clojure.java.io :as io]
             [config.core :refer [env]]
-            [dxpb-clj.db :refer [take-instruction does-pkgname-exist get-pkg-data get-all-needs-for-arch pkg-is-noarch pkg-version list-of-all-pkgnames list-of-bootstrap-pkgnames]]
+            [dxpb-clj.db :as db :refer [take-instruction
+                                        does-pkgname-exist
+                                        get-pkg-data
+                                        get-all-needs-for-arch
+                                        pkg-is-noarch
+                                        pkg-version
+                                        list-of-all-pkgnames
+                                        list-of-bootstrap-pkgnames
+                                        insert-arch-spec
+                                        remove-arch-spec
+                                        arch-spec-present?
+                                        arch-specs]]
             [dxpb-clj.repo-reader :refer [get-repo-reader]]
             [dxpb-clj.execute-build :refer [get-executor]]
             [org.tobereplaced.nio.file :refer [symbolic-link? file-name]]))
@@ -31,29 +42,43 @@
     (reset! BUILD_EXECUTOR (get-executor :parameterized-nomad))
     @BUILD_EXECUTOR))
 
-(def ARCH_PAIRS [{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64"         :cross false}
-                 {:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "x86_64-musl"    :cross false}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "i686"           :cross false}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l"         :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv6l-musl"    :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l"         :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "armv7l-musl"    :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64"        :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "aarch64-musl"   :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc"            :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc-musl"       :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64"          :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64-musl"     :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le"        :cross true}
-               #_{:XBPS_ARCH "x86_64"       :XBPS_TARGET_ARCH "ppc64le-musl"   :cross true}
-                 ])
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;> ARCH SPECIFICATIONS HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(def ALL_ARCH_SPECS
+  (agent (set nil)
+         :error-mode :fail
+         :validator (fn [new-state]
+                      (and (set? new-state)
+                           (reduce (fn [ok? {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]}]
+                                     (and ok?
+                                          (some? XBPS_ARCH)
+                                          (some? XBPS_TARGET_ARCH)
+                                          (some? cross)))
+                                   true
+                                   new-state)))))
+
+(defn start-arch-specs []
+  (doall (map (partial send ALL_ARCH_SPECS disj) @ALL_ARCH_SPECS))
+  (let [next-specs (set
+                     (union (into [] (comp (map name)
+                                           (filter (fn [in] (string/starts-with? in "arch-spec-")))
+                                           (map keyword)
+                                           (map (partial get env)))
+                                  (keys env))
+                            (arch-specs)))]
+    (doall (map (partial send ALL_ARCH_SPECS conj) next-specs))
+    (doall (map (partial insert-arch-spec) next-specs))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;> END OF ARCH SPECIFICATIONS <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;> READ IN PACKAGES HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn sh-wrap [& {:keys [env dir cmd]}]
-  (shell/with-sh-env env
+(defn sh-wrap [& {:keys [environment dir cmd]}]
+  (shell/with-sh-env environment
     (shell/with-sh-dir
       dir
       (apply sh cmd))))
@@ -65,7 +90,7 @@
   (let [command (if cross
                   ["./xbps-src" "-a" XBPS_TARGET_ARCH "dbulk-dump" pkgname]
                   ["./xbps-src" "dbulk-dump" pkgname])]
-    (-> (sh-wrap :env arch-spec :dir (:owned-packages-path env) :cmd command)
+    (-> (sh-wrap :environment arch-spec :dir (:owned-packages-path env) :cmd command)
       (assoc ::pkgname pkgname)
       (assoc ::arch-spec arch-spec))))
 
@@ -182,7 +207,7 @@
 
 (defmethod dbulk-dump-cmd->info ::data-ok [{:keys [out]
                                             {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :as arch-spec} ::arch-spec}]
-  (let [pkgname->cruxid #(str (:pkgname %)
+  (let [pkgname->cruxid #(str ":package:" (:pkgname %)
                               ":target:" (:dxpb/targetarch %)
                               ":host:" (:dxpb/hostarch %)
                               ":cross:" (:dxpb/crossbuild %))]
@@ -190,7 +215,7 @@
          dbulk-dump-str->list-of-packages
          (map #(assoc % :dxpb/hostarch XBPS_ARCH))
          (map #(assoc % :dxpb/targetarch XBPS_TARGET_ARCH))
-         (map #(assoc % :dxpb/crossbuild (not (not cross))))
+         (map #(assoc % :dxpb/crossbuild (some? cross)))
          (map #(assoc % :crux.db/id (pkgname->cruxid %)))
          (map #(assoc % :dxpb/type :package)))))
 
@@ -216,26 +241,54 @@
   (when in
     (async/put! c (first in) (fn [_] (chan-write-all c (next in))))))
 
-(defn bootstrap-pkg-list
-  ([arch-spec]
-   (let [file-list (->> (str (:owned-packages-path env) "/srcpkgs")
-                        File.
-                        .listFiles
-                        (filter (complement symbolic-link?)))
-         total-num-files (count file-list)
-         pkgnames (chan 1000 (map (comp str file-name)))
-         pkginfo (chan 1000 (comp (map dbulk-dump-info->database-command)
-                                  (map dbulk-dump-cmd->info)))]
-     (pipeline-async (get env :num-xbps-src-readers 15)
-                     pkginfo
-                     (wrap-for-pipe (partial xbps-src-dbulk-dump arch-spec))
-                     pkgnames)
-     (chan-write-all pkgnames file-list)
-     (loop [done 0]
-       (println done "/" total-num-files)
-       (take-instruction (<!! pkginfo))
-       (when (not= (inc done) total-num-files)
-         (recur (inc done)))))))
+#_ (list-of-all-package-names-to-read)
+
+(defn list-of-all-package-names-to-read []
+  {:pre [(:owned-packages-path env)]
+   :post [(seq %)]}
+  (->> (str (:owned-packages-path env) "/srcpkgs")
+       File.
+       .listFiles
+       (filter (complement symbolic-link?))
+       (map (comp str file-name))))
+
+(defn import-arch-spec
+  [& {:keys [file-list arch-spec]}]
+  {:pre [(seq file-list) (map? arch-spec)]}
+  (prn file-list)
+  (let [total-num-files (count file-list)
+        pkgnames (chan 1000)
+        pkginfo (chan 1000 (comp (map dbulk-dump-cmd->info)
+                                 (map dbulk-dump-info->database-command)))]
+    (pipeline-async (get env :num-xbps-src-readers 15)
+                    pkginfo
+                    (wrap-for-pipe (partial xbps-src-dbulk-dump arch-spec))
+                    pkgnames)
+    (chan-write-all pkgnames file-list)
+    (loop [done 0]
+      (println done "/" total-num-files)
+      (take-instruction (<!! pkginfo))
+      (when (not= (inc done) total-num-files)
+        (recur (inc done))))))
+
+#_ (import-packages)
+#_ (import-packages :package-list ["gcc"])
+#_ (db/arch-spec->db-key {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (insert-arch-spec {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (remove-arch-spec {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (start-arch-specs)
+#_ (prn @ALL_ARCH_SPECS)
+
+(defn import-packages
+  "Pass in :arch-spec to only bootstrap a specific arch spec.
+  Pass in a file list to not import every package in the tree"
+  [& {:keys [arch-spec package-list]}]
+  (doall
+    (pmap
+      (partial import-arch-spec
+               :file-list (or package-list (list-of-all-package-names-to-read))
+               :arch-spec)
+      (or @ALL_ARCH_SPECS (list arch-spec)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;> END OF READING IN PACKAGES <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -384,7 +437,7 @@
      :pkgs-needed pkgs-needed}))
 
 (defn arch-pairs-for-target [target-arch]
-  (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) ARCH_PAIRS))
+  (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) @ALL_ARCH_SPECS))
 
 (defn pkg-deps-satisfied-for-build [& {:keys [pkgname target-arch build-env as-boolean] :or {as-boolean false}}]
   (if build-env
@@ -427,7 +480,7 @@
          :_ (apply concat (map :unfindable all-needs))}))))
 
 (defn all-pkgs-to-build [list-of-pkgnames]
-  (loop [envs-to-process ARCH_PAIRS
+  (loop [envs-to-process @ALL_ARCH_SPECS
          rV {}]
     (if (seq envs-to-process)
       rV
@@ -478,9 +531,9 @@
 
 (defn pkg-list->table [{:keys [pkg-list title-annendum] :as req}]
   (let [all-pkgnames pkg-list
-        all-tgtarches (vec (set (map :XBPS_TARGET_ARCH ARCH_PAIRS)))
+        all-tgtarches (vec (set (map :XBPS_TARGET_ARCH @ALL_ARCH_SPECS)))
         pairs-in-buckets (for [tgtarch all-tgtarches]
-                           (filter #(= (:XBPS_TARGET_ARCH %) tgtarch) ARCH_PAIRS))
+                           (filter #(= (:XBPS_TARGET_ARCH %) tgtarch) @ALL_ARCH_SPECS))
         arch-building-pairs-associative (zipmap all-tgtarches pairs-in-buckets)
         pkg-list-table-head (into [:thead {} [:th "Package Name"]]
                                   (for [arch all-tgtarches]
@@ -513,8 +566,8 @@
           (rename-keys {:table :hiccup-page-list})
           hiccup->response))))
 
-(defn pass-if-build-env-real [in]
-  (when (> (.indexOf ARCH_PAIRS (::build-env in)) -1)
+(defn pass-if-build-env-real [{::keys [build-env] :as in}]
+  (when (contains? @ALL_ARCH_SPECS build-env)
     in))
 
 (defn pass-if-version-real [in]
@@ -663,5 +716,7 @@
   "I don't do a whole lot ... yet."
   [& _args]
   (let [port (Integer/valueOf (or (System/getenv "DXPB_PORT") "3001"))]
+    (start-arch-specs)
     (println "Running server now on port " port)
-    (run-jetty rosie {:port port})))
+    (run-jetty rosie {:port port})
+    (shutdown-agents)))
