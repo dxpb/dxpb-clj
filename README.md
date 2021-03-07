@@ -2,6 +2,24 @@
 
 FIXME: description
 
+## Quickstarts
+
+### Play with importing the package graph
+
+- Clone the repo
+- Set and probably export the following environmental variables:
+- `ARCH_SPEC_WHATGOESHEREDOESNOTMATTER='{:XBPS_ARCH "x86_64-musl"
+  :XBPS_TARGET_ARCH "x86_64-musl" :cross false}'`
+- `OWNED_PACKAGES_PATH=~/void-packages` (or wherever your void-packages is)
+- run `lein repl`
+- Wait for the dependencies to be installed
+- Run the following code blocks one per line in the repl
+- `(start-arch-specs)`
+- Just to prove it works at all:
+- `(time (import-packages :package-list '("gcc")))`
+- And then to do the big one:
+- `(time (import-packages))`
+
 ## Installation
 
 Download from http://example.com/FIXME.
