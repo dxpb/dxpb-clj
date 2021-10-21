@@ -215,7 +215,7 @@
          dbulk-dump-str->list-of-packages
          (map #(assoc % :dxpb/hostarch XBPS_ARCH))
          (map #(assoc % :dxpb/targetarch XBPS_TARGET_ARCH))
-         (map #(assoc % :dxpb/crossbuild (some? cross)))
+         (map #(assoc % :dxpb/crossbuild (boolean cross)))
          (map #(assoc % :crux.db/id (pkgname->cruxid %)))
          (map #(assoc % :dxpb/type :package)))))
 
