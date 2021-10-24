@@ -37,10 +37,13 @@
     (reset! REPO_READER (get-repo-reader :file+repodata))
     @REPO_READER))
 
-(defn build-executor [& {:keys [force] :or {force false}}]
+(defn build-executor [& {:keys [force mechanism] :or {force false
+                                                      mechanism :basic-shell}}]
   (if (or (nil? @BUILD_EXECUTOR) force)
-    (reset! BUILD_EXECUTOR (get-executor :parameterized-nomad))
+    (reset! BUILD_EXECUTOR (get-executor mechanism))
     @BUILD_EXECUTOR))
+
+#_ (build-executor :force true)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;> ARCH SPECIFICATIONS HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

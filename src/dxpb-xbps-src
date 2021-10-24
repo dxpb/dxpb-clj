@@ -1,0 +1,26 @@
+#!/bin/sh
+
+mkdir -p "${HOSTDIR}/logs/${PKGNAME}"
+exec > "${HOSTDIR}/logs/${PKGNAME}/target-${TARGET_ARCH}-host-${HOST_ARCH}.txt"
+exec 2>&1
+
+workingdir="$(pwd)/${HOST_ARCH}+${TARGET_ARCH}"
+
+# HOST_ARCH
+# TARGET_ARCH
+# CROSS_BUILD
+# HOSTDIR
+# GIT_HASH
+
+if [ ! -d "${workingdir}/.git" ]; then
+	git clone https://github.com/void-linux/void-packages.git "${workingdir}"
+	cd "${workingdir}"
+	./xbps-src binary-bootstrap "${HOST_ARCH}"
+fi
+cd "${workingdir}"
+
+if [ "${CROSS_BUILD}" = "false" ]; then
+	exec ./xbps-src pkg -1 -H "${HOSTDIR}" -N "${PKGNAME}"
+elif [ "${CROSS_BUILD}" = "true" ]; then
+	exec ./xbps-src pkg -a "${TARGET_ARCH}" -1 -H "${HOSTDIR}" -N "${PKGNAME}"
+fi
