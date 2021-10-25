@@ -11,5 +11,6 @@ pom.xml.asc
 .hgignore
 .hg/
 /all-pkgs.edn
-/datadir
+/datadir*
 clojure.java.io*
+/*DIR
