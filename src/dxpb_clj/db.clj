@@ -110,6 +110,8 @@
   (db-guard)
   (crux/submit-tx @node [[:crux.tx/fn :delete-arch-spec arch-spec]]))
 
+#_ (remove-arch-spec {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64-musl" :cross true})
+
 (defn does-pkgname-exist [pkgname]
   (db-guard)
   (seq
@@ -147,6 +149,15 @@
                           '?hostarch XBPS_ARCH
                           '?targetarch XBPS_TARGET_ARCH
                           '?cross cross}]}))
+
+#_ (get-pkg-key "gcc" {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (crux/q (crux/db @node)
+                 {:find '[?e]
+                  :where '[[?e :pkgname ?name]
+                           [?e :dxpb/type :package]
+                           [?e :dxpb/crossbuild ?cross]]
+                  :args [{'?name "gcc"
+                          '?cross false}]})
 
 (defn get-pkg-data
   ([pkgkey]

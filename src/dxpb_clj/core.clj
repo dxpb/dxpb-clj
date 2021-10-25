@@ -62,6 +62,13 @@
                                    true
                                    new-state)))))
 
+#_ (prn @ALL_ARCH_SPECS)
+;; succeeds:
+#_ (send ALL_ARCH_SPECS conj {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (send ALL_ARCH_SPECS conj {:XBPS_ARCH "x86_64-musl" :XBPS_TARGET_ARCH "x86_64-musl" :cross false})
+;; fails and ends mutation of ALL_ARCH_SPECS due to missing a key
+#_ (send ALL_ARCH_SPECS conj {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64"})
+
 (defn start-arch-specs []
   (doall (map (partial send ALL_ARCH_SPECS disj) @ALL_ARCH_SPECS))
   (let [next-specs (set
@@ -278,6 +285,7 @@
 #_ (import-packages :package-list ["gcc"])
 #_ (db/arch-spec->db-key {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
 #_ (insert-arch-spec {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
+#_ (insert-arch-spec {:XBPS_ARCH "x86_64-musl" :XBPS_TARGET_ARCH "x86_64-musl" :cross false})
 #_ (remove-arch-spec {:XBPS_ARCH "x86_64" :XBPS_TARGET_ARCH "x86_64" :cross false})
 #_ (start-arch-specs)
 #_ (prn @ALL_ARCH_SPECS)
@@ -423,6 +431,11 @@
    :pkgname pkgname
    :version (pkg-version pkgname)
    :arch arch))
+
+#_ (time (pkg-in-repo "xz" "x86_64-musl"))
+#_ (time (pkg-in-repo "chroot-git" "x86_64-musl"))
+#_ (time (pkg-version "xz"))
+#_ (time (pkg-version "chroot-git"))
 
 (defn pkg-requires-to-build [& {:keys [pkgname build-env]}]
   (let [spec-not-parsable (fn [known-data] (not (true? (val known-data))))
