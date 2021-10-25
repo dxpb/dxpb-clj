@@ -11,10 +11,10 @@
   (if exact-version
     (->> pkgspec
          pkgspec->filename
-         (str (:dxpb-binpkg-dir env) "/")
+         (str (:dxpb-binpkg-dir env) "/binpkgs/")
          io/file
          .exists)
-    (->> (:dxpb-binpkg-dir env)
+    (->> (str (:dxpb-binpkg-dir env) "/binpkgs/")
          str
          io/file
          .list
@@ -23,10 +23,10 @@
 
 (defn- package-in-repo-from-xbps-repodata [& {:keys [pkgname version arch exact-version] :or {exact-version true}}]
   (let [repodata-dir (or (:dxpb-repodata-dir env) (:dxpb-binpkg-dir env))
-        {:keys [exit out err]} (with-sh-env {:XBPS_ARCH arch}
+        {:keys [exit out err]} (with-sh-env {:XBPS_TARGET_ARCH arch}
                                  (sh "xbps-query"
                                      "-i"
-                                     (str "--repository=" repodata-dir)
+                                     (str "--repository=" repodata-dir "/binpkgs/")
                                      "-S"
                                      pkgname
                                      "--property"
