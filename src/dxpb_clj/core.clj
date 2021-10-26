@@ -453,6 +453,10 @@
      :target-requirements target-requirements
      :pkgs-needed pkgs-needed}))
 
+#_ (get-pkg-data (name "gcc") (first @ALL_ARCH_SPECS))
+#_ (pkgname-to-needs :pkgname "gcc" :build-env (first @ALL_ARCH_SPECS))
+#_ (pkg-requires-to-build :pkgname "gcc" :build-env (first @ALL_ARCH_SPECS))
+
 (defn arch-pairs-for-target [target-arch]
   (filter (comp (partial = target-arch) :XBPS_TARGET_ARCH) @ALL_ARCH_SPECS))
 
@@ -478,32 +482,48 @@
         (seq (filter true? (vals rV)))
         rV))))
 
-(defn get-which-packages-to-build [& {:keys [list-of-pkgnames build-env]}]
+(defn get-which-packages-to-build [& {:keys [list-of-pkgnames build-env take-only]}]
+  {:pre [(some? build-env) (some? list-of-pkgnames)]}
   ;;; Need to find a list of package names
   ;;; Then return the set of packagenames that can be built
   ;;; Maybe do this in 2 phases, bootstrap first, then the rest?
   ;;; For each pkgname, if it isn't present, and can be built, then return its name.
-  (let [bootstrap-list (list-of-bootstrap-pkgnames)
+  (let [take-some-or-all (if (number? take-only)
+                           (partial take take-only)
+                           identity)
+        bootstrap-list (list-of-bootstrap-pkgnames)
         pkg-can-and-should-be-built (fn [arch pkgname-in]
                                              (when (pkg-in-repo pkgname-in arch)
                                                (pkg-deps-satisfied-for-build :pkgname pkgname-in :build-env build-env)))
         absent-bootstrap-packages (filter (complement #(pkg-in-repo % (:XBPS_TARGET_ARCH build-env))) bootstrap-list)
-        bootstrap-packages-to-build (filter (partial pkg-deps-satisfied-for-build :build-env build-env :pkgname) absent-bootstrap-packages)]
+        bootstrap-packages-to-build (->> absent-bootstrap-packages
+                                         (filter (partial pkg-deps-satisfied-for-build :build-env build-env :pkgname))
+                                         take-some-or-all)]
     (if (seq absent-bootstrap-packages)
       {(:XBPS_TARGET_ARCH build-env) bootstrap-packages-to-build}
       (let [all-needs (map (partial pkgname-to-needs :build-env build-env :pkgname) list-of-pkgnames)
             all-target-requirements (merge-with merge-obtained-pkgnames (map :target-requirements all-needs))]
-        {(:XBPS_TARGET_ARCH build-env) (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) all-target-requirements)
+        {(:XBPS_TARGET_ARCH build-env) (take-some-or-all (filter (partial pkg-can-and-should-be-built (:XBPS_TARGET_ARCH build-env)) all-target-requirements))
          :_ (apply concat (map :unfindable all-needs))}))))
 
-(defn all-pkgs-to-build [list-of-pkgnames]
+#_ (filter (complement #(pkg-in-repo % (:XBPS_TARGET_ARCH (first @ALL_ARCH_SPECS)))) (list-of-bootstrap-pkgnames))
+#_ (let [build-env (first @ALL_ARCH_SPECS)
+         bootstrap-pkgs (list-of-bootstrap-pkgnames)
+         absent-bootstrap-packages (filter (complement #(pkg-in-repo % (:XBPS_TARGET_ARCH build-env))) bootstrap-pkgs)]
+     (filter (partial pkg-deps-satisfied-for-build :build-env build-env :pkgname) absent-bootstrap-packages))
+#_ (get-which-packages-to-build :list-of-pkgnames [] :build-env (first @ALL_ARCH_SPECS))
+
+(defn all-pkgs-to-build [list-of-pkgnames & {:keys [take-only]}]
   (loop [envs-to-process @ALL_ARCH_SPECS
          rV {}]
     (if (empty? envs-to-process)
       rV
       (let [proc-this (first envs-to-process)]
         (recur (rest envs-to-process)
-               (assoc rV proc-this (get-which-packages-to-build :list-of-pkgnames list-of-pkgnames :build-env proc-this)))))))
+               (assoc rV proc-this (get-which-packages-to-build :take-only take-only :list-of-pkgnames list-of-pkgnames :build-env proc-this)))))))
+
+#_ (all-pkgs-to-build [] :take-only 1)
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
