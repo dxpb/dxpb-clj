@@ -32,9 +32,10 @@
 
 (def BUILD_EXECUTOR (atom nil))
 
-(defn repo-reader [& {:keys [force] :or {force false}}]
+(defn repo-reader [& {:keys [force mechanism] :or {force false
+                                                   mechanism :file+repodata}}]
   (if (or (nil? @REPO_READER) force)
-    (reset! REPO_READER (get-repo-reader :file+repodata))
+    (reset! REPO_READER (get-repo-reader mechanism))
     @REPO_READER))
 
 (defn build-executor [& {:keys [force mechanism] :or {force false
@@ -498,7 +499,7 @@
 (defn all-pkgs-to-build [list-of-pkgnames]
   (loop [envs-to-process @ALL_ARCH_SPECS
          rV {}]
-    (if (seq envs-to-process)
+    (if (empty? envs-to-process)
       rV
       (let [proc-this (first envs-to-process)]
         (recur (rest envs-to-process)
