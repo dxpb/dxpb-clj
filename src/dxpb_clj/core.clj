@@ -524,7 +524,84 @@
 
 #_ (all-pkgs-to-build [] :take-only 1)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;> END OF PART WITH THE GRAPH <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;> BEGIN THE PART WITH BUILDING <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(def ACTIVE_BUILDS (atom {}))
+
+(defn trigger-build [& {:keys [pkgname build-env]
+                        {:keys [XBPS_ARCH XBPS_TARGET_ARCH cross]} :build-env}]
+  {:pre [(some? pkgname) (some? build-env)]}
+  (let [{:keys [submit]} (build-executor)]
+    (submit :pkgname pkgname :host-arch XBPS_ARCH :target-arch XBPS_TARGET_ARCH :is-cross cross :git-hash nil)))
+
+(defn trigger-and-track-build [& {:keys [pkgname build-env]}]
+  (let [key (db/get-pkg-key pkgname build-env)]
+    (if (nil? (get @ACTIVE_BUILDS key))
+      (let [build (trigger-build :pkgname pkgname :build-env build-env)]
+        (swap! ACTIVE_BUILDS assoc key build)))))
+
+#_ (trigger-and-track-build :pkgname "xz" :build-env (first @ALL_ARCH_SPECS))
+
+#_ (def __a (all-pkgs-to-build [] :take-only 1))
+#_ (prn (key (vals (second (prn __a)))))
+#_ (for [sets (all-pkgs-to-build [] :take-only 1)]
+     (if (seq (second sets))
+       (doall (map (partial trigger-and-track-build :build-env (key sets) :pkgname) (second sets)))))
+
+;; Schedule some builds!!!!!
+#_ (for [[env packages] (all-pkgs-to-build [] :take-only 10)]
+     (let [to-build (get packages (:XBPS_TARGET_ARCH env))]
+       (if (seq to-build)
+         (doall (map (partial trigger-and-track-build :build-env env :pkgname) to-build)))))
+
+#_ (prn @ACTIVE_BUILDS)
+
+#_ (prn (= {:exit 0 :out "" :err ""} ((:result? (val (first @ACTIVE_BUILDS))))))
+
+#_ (filter false?
+           (for [build @ACTIVE_BUILDS]
+             (if (= {:exit 0 :out "" :err ""} ((:result? (val build))))
+               true
+               false)))
+
+(defn build-until-done []
+  (loop [ongoing-builds []
+         to-build []
+         no-stop true
+         failed-packages []]
+    (prn "Ongoing:" ongoing-builds)
+    (prn "To build:" to-build)
+    (cond
+      (and (empty? ongoing-builds)
+           (empty? to-build)
+           (not no-stop)) {:failed failed-packages}
+      (and (empty? ongoing-builds)
+           (empty? to-build)
+           no-stop) (do
+                      (prn "Scheduling more builds")
+                      (recur ongoing-builds (all-pkgs-to-build [] :take-only 10) false failed-packages))
+      (seq to-build) (let [[env packages] (first to-build)
+                           ok-packages (get packages (:XBPS_TARGET_ARCH env))
+                           next-failed-packages (get packages :_)
+                           new-builds (map (partial trigger-build :build-env env :pkgname) ok-packages)
+                           new-ongoing (concat ongoing-builds new-builds)
+                           new-failed (concat failed-packages next-failed-packages)]
+                       (recur new-ongoing (rest to-build) false new-failed))
+      (seq ongoing-builds) (case ((:result? (first ongoing-builds)))
+                             :done (recur (rest ongoing-builds) to-build true failed-packages)
+                             :failed (recur (rest ongoing-builds) to-build true (conj failed-packages (first ongoing-builds)))
+                             (do
+                               (prn ((:result? (first ongoing-builds))))
+                               (Thread/sleep 10000)
+                               (recur ongoing-builds to-build true failed-packages))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;>  END THE PART WITH BUILDING  <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;> WEBAPP PART HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
