@@ -28,23 +28,11 @@
             [dxpb-clj.execute-build :refer [get-executor]]
             [org.tobereplaced.nio.file :refer [symbolic-link? file-name]]))
 
-(def REPO_READER (atom nil))
+(defn repo-reader [& {:keys [force mechanism] :or {mechanism :file+repodata}}]
+  (get-repo-reader mechanism))
 
-(def BUILD_EXECUTOR (atom nil))
-
-(defn repo-reader [& {:keys [force mechanism] :or {force false
-                                                   mechanism :file+repodata}}]
-  (if (or (nil? @REPO_READER) force)
-    (reset! REPO_READER (get-repo-reader mechanism))
-    @REPO_READER))
-
-(defn build-executor [& {:keys [force mechanism] :or {force false
-                                                      mechanism :basic-shell}}]
-  (if (or (nil? @BUILD_EXECUTOR) force)
-    (reset! BUILD_EXECUTOR (get-executor mechanism))
-    @BUILD_EXECUTOR))
-
-#_ (build-executor :force true)
+(defn build-executor [& {:keys [force mechanism] :or {mechanism :basic-shell}}]
+  (get-executor mechanism))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;> ARCH SPECIFICATIONS HERE <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
