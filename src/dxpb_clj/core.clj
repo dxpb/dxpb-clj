@@ -556,7 +556,7 @@
                true
                false)))
 
-(defn build-until-done []
+(defn build-until-done [pkgs]
   (loop [ongoing-builds []
          to-build []
          no-stop true
@@ -571,7 +571,7 @@
            (empty? to-build)
            no-stop) (do
                       (prn "Scheduling more builds")
-                      (recur ongoing-builds (all-pkgs-to-build [] :take-only 10) false failed-packages))
+                      (recur ongoing-builds (all-pkgs-to-build pkgs :take-only 10) false failed-packages))
       (seq to-build) (let [[env packages] (first to-build)
                            ok-packages (get packages (:XBPS_TARGET_ARCH env))
                            next-failed-packages (get packages :_)
@@ -582,10 +582,12 @@
       (seq ongoing-builds) (case ((:result? (first ongoing-builds)))
                              :done (recur (rest ongoing-builds) to-build true failed-packages)
                              :failed (recur (rest ongoing-builds) to-build true (conj failed-packages (first ongoing-builds)))
-                             (do
-                               (prn ((:result? (first ongoing-builds))))
-                               (Thread/sleep 10000)
-                               (recur ongoing-builds to-build true failed-packages))))))
+                             :impossible (prn "Ok, pkg impossible?")
+                             '(:working :pending) (do
+                                                    (prn ((:result? (first ongoing-builds))))
+                                                    (Thread/sleep 10000)
+                                                    (recur ongoing-builds to-build true failed-packages))
+                             (prn "UNEXPECTED")))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;>  END THE PART WITH BUILDING  <;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

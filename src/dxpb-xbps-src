@@ -6,6 +6,7 @@ exec 2>&1
 
 workingdir="$(pwd)/${HOST_ARCH}+${TARGET_ARCH}"
 
+# PKGVERSION
 # HOST_ARCH
 # TARGET_ARCH
 # CROSS_BUILD
@@ -14,10 +15,19 @@ workingdir="$(pwd)/${HOST_ARCH}+${TARGET_ARCH}"
 
 if [ ! -d "${workingdir}/.git" ]; then
 	git clone https://github.com/void-linux/void-packages.git "${workingdir}"
-	cd "${workingdir}"
+	cd "${workingdir}" || exit 1
 	./xbps-src binary-bootstrap "${HOST_ARCH}"
+else
+	cd "${workingdir}" || exit 1
+	git pull
 fi
-cd "${workingdir}"
+
+present_version="$(./xbps-src dbulk-dump "${PKGNAME}" | awk '/version:/ { ver=$2 } /revision:/ { rev=$2 } END { print ver "_" rev}')"
+
+if [ "${present_version}" != "$PKGVERSION" ]; then
+	echo "impossible"
+	exit 2
+fi
 
 if [ "${CROSS_BUILD}" = "false" ]; then
 	exec ./xbps-src pkg -1 -H "${HOSTDIR}" -N "${PKGNAME}"

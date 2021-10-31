@@ -9,13 +9,13 @@
 ;;; These take a pkgname, host and target arch, if that's cross, and a git hash
 ;;; They then return a map like so:
 ;;; {:result? <fn-of-0-arguments> ;; (nil instead of a fn if the thing isn't started)
-;;;  ;; Returns a keyword, one of :done :working :failed
+;;;  ;; Returns a keyword, one of :pending :impossible :working :done :failed
 ;;;  :build-profile-possible <bool> ;; if this is false, don't try scheduling builds
 ;;;  :__debug <arbitrary|optional> ;; don't rely on this being there. Ever.
 ;;;  }
 
 ; unverified
-(defn- submit-package-to-parameterized-nomad [& {:keys [pkgname host-arch target-arch is-cross git-hash]}]
+(defn- submit-package-to-parameterized-nomad [& {:keys [pkgname pkgversion host-arch target-arch is-cross git-hash]}]
   (let [payload {:Meta {:git_hash git-hash
                         :pkgname pkgname
                         :host_arch host-arch
@@ -49,8 +49,9 @@
 
 (def accepted-host-archs (set (get env :dxpb-accepted-host-archs ["x86_64" "x86_64-musl"])))
 
-(defn shell-build-pkg [{:keys [pkgname host-arch target-arch is-cross git-hash]}]
+(defn shell-build-pkg [{:keys [pkgname pkgversion host-arch target-arch is-cross git-hash]}]
   (let [build-env {:PKGNAME pkgname
+                   :PKGVERSION pkgversion
                    :HOST_ARCH host-arch
                    :TARGET_ARCH target-arch
                    :CROSS_BUILD is-cross
@@ -61,7 +62,7 @@
       (shell/with-sh-dir dir
         (sh "dxpb-xbps-src")))))
 
-(defn submit-package-to-shell [& {:keys [pkgname host-arch target-arch is-cross git-hash] :as instruction}]
+(defn submit-package-to-shell [& {:keys [pkgname pkgversion host-arch target-arch is-cross git-hash] :as instruction}]
   (if (not (contains? accepted-host-archs host-arch))
     {:result? (fn []
                 :failed)
@@ -78,7 +79,9 @@
                     (if (realized? build-result)
                       (case (:err @build-result)
                         0 :done
-                        :failed)
+                        (case (:stdout @build-result)
+                          "" :failed
+                          :impossible))
                       :working)))
        :build-profile-possible true
        :__debug {}})))
