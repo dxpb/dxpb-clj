@@ -88,7 +88,8 @@
   [{:keys [XBPS_ARCH XBPS_TARGET_ARCH cross] :as arch-spec} pkgname]
   (let [command (if cross
                   ["./xbps-src" "-a" XBPS_TARGET_ARCH "dbulk-dump" pkgname]
-                  ["./xbps-src" "dbulk-dump" pkgname])]
+                  ["./xbps-src" "dbulk-dump" pkgname])
+        arch-spec (assoc arch-spec :XBPS_CHROOT_CMD "ethereal")]
     (-> (sh-wrap :environment arch-spec :dir (:owned-packages-path env) :cmd command)
       (assoc ::pkgname pkgname)
       (assoc ::arch-spec arch-spec))))

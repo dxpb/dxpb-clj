@@ -2,10 +2,6 @@
 
 create_pkgsdir() {
 	git clone https://github.com/void-linux/void-packages.git PACKAGESDIR
-	(
-	cd PACKAGESDIR
-	./xbps-src binary-bootstrap
-)
 }
 
 [ -d BUILDDIR ] || mkdir BUILDDIR
